@@ -1,0 +1,31 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from auth import router as auth_router
+from database.database import init_db
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+
+
+@app.get("/")
+def home():
+    return {
+        "message": "CipherChat Backend is running!"
+    }
+
+
+app.include_router(auth_router)
+
+
