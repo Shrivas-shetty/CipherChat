@@ -1,14 +1,26 @@
 import { useNavigate } from "react-router-dom";
+import api from "../api";
+
 
 function Chat() {
   const navigate = useNavigate();
   const username = localStorage.getItem("username");
 
-  const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("username");
+  const logout = async () => {
+    try {
+      await api.post("/logout", {
+        username: username
+      });
 
-    navigate("/login");
+      // Remove login data after successful logout request
+      localStorage.removeItem("token");
+      localStorage.removeItem("username");
+
+      navigate("/login");
+
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   return (

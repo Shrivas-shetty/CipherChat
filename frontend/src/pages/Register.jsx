@@ -19,6 +19,7 @@ function Register() {
       });
 
       if (response.data.success) {
+        alert("Registered Succesfully");
         navigate("/login");
       } else {
         setMessage(response.data.message);

@@ -5,7 +5,7 @@ DB_NAME = "cipherchat.db"
 
 def get_db():
     conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = sqlite3.Row   #access records values bu column names eg: user["email"] instead of user[2]
     return conn
 
 
