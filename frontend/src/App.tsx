@@ -1,83 +1,79 @@
 import { useEffect, useRef, useState } from "react";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 import {
   loadServerAddress,
   saveServerAddress,
   type ServerAddress,
 } from "./config/serverAddress";
+import { AnalystPage } from "./pages/AnalystPage";
+import { AuthPage } from "./pages/AuthPage";
 import { ChatPage, type ChatMessage } from "./pages/ChatPage";
-import { ConnectPage } from "./pages/ConnectPage";
 import { ChatSocket, type IncomingFrame } from "./ws/chatSocket";
 
-type Screen = "connect" | "chat";
-
-export default function App() {
-  const [screen, setScreen] = useState<Screen>("connect");
+function MainApp() {
+  const { user, token, loading, logout, setAuthError } = useAuth();
   const [serverAddress, setServerAddress] = useState<ServerAddress>(() =>
     loadServerAddress()
   );
-  const [joining, setJoining] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
 
-  const [displayName, setDisplayName] = useState("");
-  const [userId, setUserId] = useState("");
   const [roomState, setRoomState] = useState<"waiting" | "paired">("waiting");
   const [peerName, setPeerName] = useState<string | null>(null);
   const [peerLeftNotice, setPeerLeftNotice] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [disconnected, setDisconnected] = useState(false);
+  const [wsError, setWsError] = useState<string | null>(null);
 
   const socketRef = useRef<ChatSocket | null>(null);
   const intentionalCloseRef = useRef(false);
-  const pendingNameRef = useRef<string | null>(null);
-  const screenRef = useRef<Screen>(screen);
-  const userIdRef = useRef(userId);
+
+  function handleServerAddressChange(addr: ServerAddress) {
+    setServerAddress(addr);
+    saveServerAddress(addr);
+  }
+
+  function resetChatState() {
+    setRoomState("waiting");
+    setPeerName(null);
+    setPeerLeftNotice(false);
+    setMessages([]);
+    setDisconnected(false);
+    setWsError(null);
+  }
 
   useEffect(() => {
-    screenRef.current = screen;
-  }, [screen]);
+    if (!token || user?.role !== "user") {
+      intentionalCloseRef.current = true;
+      socketRef.current?.close();
+      socketRef.current = null;
+      resetChatState();
+      return;
+    }
 
-  useEffect(() => {
-    userIdRef.current = userId;
-  }, [userId]);
-
-  useEffect(() => {
     const socket = new ChatSocket();
     socketRef.current = socket;
+    intentionalCloseRef.current = false;
+    resetChatState();
 
     socket.setHandlers({
       onOpen: () => {
-        const name = pendingNameRef.current;
-        if (name) {
-          socket.join(name);
-        }
+        setDisconnected(false);
       },
       onClose: () => {
-        setJoining(false);
         if (intentionalCloseRef.current) {
           intentionalCloseRef.current = false;
           return;
         }
-        if (screenRef.current === "chat" || pendingNameRef.current) {
-          setDisconnected(true);
-          setScreen("chat");
-        } else {
-          setConnectError((prev) => prev ?? "Could not connect to server.");
-        }
+        setDisconnected(true);
       },
       onFrame: (frame: IncomingFrame) => {
         switch (frame.type) {
           case "joined":
-            setDisplayName(frame.display_name);
-            setUserId(frame.user_id);
-            userIdRef.current = frame.user_id;
-            setJoining(false);
-            setConnectError(null);
             setDisconnected(false);
-            setScreen("chat");
+            setWsError(null);
             break;
           case "status":
             setRoomState(frame.state);
-            setPeerName(frame.peer?.display_name ?? null);
+            setPeerName(frame.peer?.username ?? null);
             if (frame.state === "paired") {
               setPeerLeftNotice(false);
             }
@@ -90,7 +86,7 @@ export default function App() {
                 text: frame.text,
                 ts: frame.ts,
                 sender: frame.sender,
-                mine: frame.sender.user_id === userIdRef.current,
+                mine: frame.sender.user_id === user.id.toString(),
               },
             ]);
             break;
@@ -99,62 +95,36 @@ export default function App() {
             setPeerName(null);
             break;
           case "error":
-            if (frame.code === "ROOM_FULL" || frame.code === "NAME_TAKEN") {
-              setJoining(false);
-              setConnectError(`${frame.code}: ${frame.message}`);
-              setScreen("connect");
+            if (frame.code === "UNAUTHORIZED") {
               intentionalCloseRef.current = true;
               socket.close();
-            } else if (frame.code === "NOT_JOINED") {
-              setJoining(false);
-              setConnectError(`${frame.code}: ${frame.message}`);
-              setScreen("connect");
+              void logout();
+              setAuthError("Session expired, please log in again");
+            } else if (frame.code === "ROOM_FULL") {
+              intentionalCloseRef.current = true;
+              setWsError("Chat room is full, only 2 users allowed");
+            } else if (frame.code === "SUPERSEDED") {
+              intentionalCloseRef.current = true;
+              setWsError("You were signed in from another tab or device");
+            } else if (frame.code === "FORBIDDEN_ROLE") {
+              intentionalCloseRef.current = true;
+              setWsError("Analysts cannot join the chat");
+            } else {
+              setWsError(`${frame.code}: ${frame.message}`);
             }
-            break;
-          default:
             break;
         }
       },
     });
+
+    socket.connect(serverAddress, token);
 
     return () => {
       intentionalCloseRef.current = true;
       socket.close();
       socketRef.current = null;
     };
-  }, []);
-
-  function handleServerAddressChange(addr: ServerAddress) {
-    setServerAddress(addr);
-    saveServerAddress(addr);
-  }
-
-  function resetChatState() {
-    setUserId("");
-    userIdRef.current = "";
-    setRoomState("waiting");
-    setPeerName(null);
-    setPeerLeftNotice(false);
-    setMessages([]);
-    setDisconnected(false);
-  }
-
-  function onJoin(name: string) {
-    setConnectError(null);
-    setJoining(true);
-    resetChatState();
-    setDisplayName(name);
-    pendingNameRef.current = name;
-    intentionalCloseRef.current = false;
-
-    const socket = socketRef.current;
-    if (!socket) {
-      setJoining(false);
-      setConnectError("Socket not available");
-      return;
-    }
-    socket.connect(serverAddress);
-  }
+  }, [token, user?.id, user?.role, serverAddress, logout, setAuthError]);
 
   function onSend(text: string) {
     try {
@@ -164,38 +134,61 @@ export default function App() {
     }
   }
 
-  function onReconnect() {
+  function handleLogout() {
     intentionalCloseRef.current = true;
     socketRef.current?.close();
-    resetChatState();
-    setScreen("connect");
-    setJoining(false);
-    setConnectError(null);
-    pendingNameRef.current = null;
+    void logout();
   }
 
-  if (screen === "chat" && (userId || disconnected)) {
+  function handleReconnect() {
+    if (!token) return;
+    setWsError(null);
+    setDisconnected(false);
+    intentionalCloseRef.current = false;
+    socketRef.current?.connect(serverAddress, token);
+  }
+
+  if (loading) {
     return (
-      <ChatPage
-        displayName={displayName}
-        roomState={roomState}
-        peerName={peerName}
-        peerLeftNotice={peerLeftNotice}
-        messages={messages}
-        disconnected={disconnected}
-        onSend={onSend}
-        onReconnect={onReconnect}
+      <div className="page connect-page">
+        <p className="loading-text">Loading session…</p>
+      </div>
+    );
+  }
+
+  if (!user || !token) {
+    return (
+      <AuthPage
+        serverAddress={serverAddress}
+        onServerAddressChange={handleServerAddressChange}
       />
     );
   }
 
+  if (user.role === "analyst") {
+    return <AnalystPage />;
+  }
+
   return (
-    <ConnectPage
-      serverAddress={serverAddress}
-      onServerAddressChange={handleServerAddressChange}
-      onJoin={onJoin}
-      joining={joining}
-      error={connectError}
+    <ChatPage
+      username={user.username}
+      roomState={roomState}
+      peerName={peerName}
+      peerLeftNotice={peerLeftNotice}
+      messages={messages}
+      disconnected={disconnected}
+      wsError={wsError}
+      onSend={onSend}
+      onLogout={handleLogout}
+      onReconnect={handleReconnect}
     />
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }

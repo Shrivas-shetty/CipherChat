@@ -6,6 +6,8 @@ __pycache__/
 venv/
 backend/data/*
 !backend/data/.gitkeep
+backend/data/app.db
+backend/data/jwt_secret
 .env
 *.db
 .DS_Store

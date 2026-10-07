@@ -4,31 +4,35 @@ export type ChatMessage = {
   id: string;
   text: string;
   ts: string;
-  sender: { user_id: string; display_name: string };
+  sender: { user_id: string; username: string };
   mine: boolean;
 };
 
 type RoomState = "waiting" | "paired";
 
 type Props = {
-  displayName: string;
+  username: string;
   roomState: RoomState;
   peerName: string | null;
   peerLeftNotice: boolean;
   messages: ChatMessage[];
   disconnected: boolean;
+  wsError: string | null;
   onSend: (text: string) => void;
+  onLogout: () => void;
   onReconnect: () => void;
 };
 
 export function ChatPage({
-  displayName,
+  username,
   roomState,
   peerName,
   peerLeftNotice,
   messages,
   disconnected,
+  wsError,
   onSend,
+  onLogout,
   onReconnect,
 }: Props) {
   const [draft, setDraft] = useState("");
@@ -42,6 +46,7 @@ export function ChatPage({
   }, [messages]);
 
   function bannerText(): string {
+    if (wsError) return wsError;
     if (disconnected) return "Disconnected";
     if (roomState === "paired" && peerName) {
       return `Connected to ${peerName}`;
@@ -56,32 +61,48 @@ export function ChatPage({
   function handleSend(e: FormEvent) {
     e.preventDefault();
     const text = draft.trim();
-    if (!text || disconnected) return;
+    if (!text || disconnected || wsError) return;
     onSend(text);
     setDraft("");
   }
+
+  const isBlocked = disconnected || Boolean(wsError);
 
   return (
     <div className="page chat-page">
       <header className="chat-header">
         <div>
           <h1>CipherChat</h1>
-          <p className="you-are">You are {displayName}</p>
+          <p className="you-are">Logged in as {username}</p>
         </div>
-        <div
-          className={`status-banner ${disconnected ? "disconnected" : roomState}`}
-          role="status"
-        >
-          {bannerText()}
+        <div className="header-actions">
+          <div
+            className={`status-banner ${isBlocked ? "disconnected" : roomState}`}
+            role="status"
+          >
+            {bannerText()}
+          </div>
+          <button
+            type="button"
+            className="btn secondary logout-btn"
+            onClick={onLogout}
+          >
+            Logout
+          </button>
         </div>
       </header>
 
-      {disconnected ? (
+      {isBlocked ? (
         <div className="disconnected-panel">
-          <p>Connection closed unexpectedly.</p>
-          <button type="button" className="btn primary" onClick={onReconnect}>
-            Reconnect
-          </button>
+          <p>{wsError ?? "Connection closed unexpectedly."}</p>
+          <div className="btn-row">
+            <button type="button" className="btn primary" onClick={onReconnect}>
+              Reconnect
+            </button>
+            <button type="button" className="btn secondary" onClick={onLogout}>
+              Log Out
+            </button>
+          </div>
         </div>
       ) : (
         <>
@@ -96,7 +117,7 @@ export function ChatPage({
                 >
                   <div className="bubble">
                     <span className="bubble-meta">
-                      {m.mine ? "You" : m.sender.display_name}
+                      {m.mine ? "You" : m.sender.username}
                     </span>
                     <p className="bubble-text">{m.text}</p>
                   </div>
@@ -113,13 +134,13 @@ export function ChatPage({
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Type a message…"
               maxLength={2000}
-              disabled={disconnected}
+              disabled={isBlocked}
               autoComplete="off"
             />
             <button
               type="submit"
               className="btn primary"
-              disabled={disconnected || !draft.trim()}
+              disabled={isBlocked || !draft.trim()}
             >
               Send
             </button>

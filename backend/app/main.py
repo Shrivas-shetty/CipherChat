@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
@@ -7,7 +8,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ORIGIN_REGEX
-from app.routers import health, ws
+from app.db.base import init_db
+from app.routers import auth, health, ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,8 +17,18 @@ logging.basicConfig(
 )
 
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    init_db()
+    yield
+
+
 def create_app() -> FastAPI:
-    application = FastAPI(title="CipherChat", version="0.1.0")
+    application = FastAPI(
+        title="CipherChat",
+        version="0.2.0",
+        lifespan=lifespan,
+    )
 
     application.add_middleware(
         CORSMiddleware,
@@ -27,6 +39,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(health.router)
+    application.include_router(auth.router)
     application.include_router(ws.router)
 
     dist_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"

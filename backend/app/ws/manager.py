@@ -1,7 +1,6 @@
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
-from uuid import uuid4
 
 from fastapi import WebSocket
 
@@ -14,15 +13,16 @@ logger = logging.getLogger(__name__)
 class UserConnection:
     websocket: WebSocket
     user_id: str
-    display_name: str
+    username: str
 
 
 @dataclass
 class ConnectionManager:
     """In-memory registry for the two-user chat room."""
 
+    # user_id -> UserConnection
     _users: dict[str, UserConnection] = field(default_factory=dict)
-    # websocket id() -> user_id once joined
+    # websocket id() -> user_id
     _ws_to_user: dict[int, str] = field(default_factory=dict)
 
     @property
@@ -41,34 +41,24 @@ class ConnectionManager:
             return None
         return self._users.get(user_id)
 
-    def name_taken(self, display_name: str) -> bool:
-        key = display_name.casefold()
-        return any(u.display_name.casefold() == key for u in self._users.values())
+    def get_user_by_id(self, user_id: str) -> Optional[UserConnection]:
+        return self._users.get(user_id)
 
     def room_full(self) -> bool:
         return len(self._users) >= MAX_USERS
 
-    async def join(
-        self, websocket: WebSocket, display_name: str
-    ) -> tuple[Optional[UserConnection], Optional[str]]:
-        """
-        Register a joined user.
-        Returns (user, error_code) where error_code is ROOM_FULL or NAME_TAKEN.
-        """
-        if self.room_full():
-            return None, "ROOM_FULL"
-        if self.name_taken(display_name):
-            return None, "NAME_TAKEN"
-
+    def add_user(
+        self, websocket: WebSocket, user_id: str, username: str
+    ) -> UserConnection:
         user = UserConnection(
             websocket=websocket,
-            user_id=str(uuid4()),
-            display_name=display_name,
+            user_id=user_id,
+            username=username,
         )
-        self._users[user.user_id] = user
-        self._ws_to_user[id(websocket)] = user.user_id
-        logger.info("user joined user_id=%s name=%s", user.user_id, display_name)
-        return user, None
+        self._users[user_id] = user
+        self._ws_to_user[id(websocket)] = user_id
+        logger.info("user registered user_id=%s username=%s", user_id, username)
+        return user
 
     def peer_of(self, user: UserConnection) -> Optional[UserConnection]:
         for other in self._users.values():
@@ -82,7 +72,7 @@ class ConnectionManager:
             return {"state": "waiting", "peer": None}
         return {
             "state": "paired",
-            "peer": {"display_name": peer.display_name},
+            "peer": {"username": peer.username},
         }
 
     async def broadcast_json(self, payload: dict) -> None:
@@ -111,11 +101,33 @@ class ConnectionManager:
         user = self._users.pop(user_id, None)
         if user:
             logger.info(
-                "user disconnected user_id=%s name=%s",
+                "user disconnected user_id=%s username=%s",
                 user.user_id,
-                user.display_name,
+                user.username,
             )
         return user
+
+    async def close_user(self, user_id: str, reason: str = "User logged out") -> None:
+        user = self._users.get(user_id)
+        if not user:
+            return
+        ws = user.websocket
+        self.disconnect(ws)
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+        remaining = self.joined_users()
+        if remaining:
+            left_payload = {"v": 1, "type": "peer_left", "username": user.username}
+            for u in remaining:
+                await self.send_json(u.websocket, left_payload)
+                status = self.status_payload(u)
+                await self.send_json(
+                    u.websocket,
+                    {"v": 1, "type": "status", "state": status["state"], "peer": status["peer"]},
+                )
 
 
 manager = ConnectionManager()

@@ -2,10 +2,10 @@ import { wsUrl, type ServerAddress } from "../config/serverAddress";
 
 export const PROTOCOL_VERSION = 1;
 
-export type OutgoingJoin = {
+export type OutgoingAuth = {
   v: 1;
-  type: "join";
-  display_name: string;
+  type: "auth";
+  token: string;
 };
 
 export type OutgoingChat = {
@@ -14,27 +14,27 @@ export type OutgoingChat = {
   text: string;
 };
 
-export type OutgoingFrame = OutgoingJoin | OutgoingChat;
+export type OutgoingFrame = OutgoingAuth | OutgoingChat;
 
 export type IncomingJoined = {
   v: 1;
   type: "joined";
-  display_name: string;
   user_id: string;
+  username: string;
 };
 
 export type IncomingStatus = {
   v: 1;
   type: "status";
   state: "waiting" | "paired";
-  peer: { display_name: string } | null;
+  peer: { username: string } | null;
 };
 
 export type IncomingChat = {
   v: 1;
   type: "chat";
   id: string;
-  sender: { user_id: string; display_name: string };
+  sender: { user_id: string; username: string };
   text: string;
   ts: string;
 };
@@ -42,13 +42,19 @@ export type IncomingChat = {
 export type IncomingPeerLeft = {
   v: 1;
   type: "peer_left";
-  display_name: string;
+  username: string;
 };
 
 export type IncomingError = {
   v: 1;
   type: "error";
-  code: "ROOM_FULL" | "NAME_TAKEN" | "BAD_FRAME" | "NOT_JOINED" | string;
+  code:
+    | "UNAUTHORIZED"
+    | "FORBIDDEN_ROLE"
+    | "ROOM_FULL"
+    | "SUPERSEDED"
+    | "BAD_FRAME"
+    | string;
   message: string;
 };
 
@@ -78,12 +84,24 @@ export class ChatSocket {
     return this.socket?.readyState ?? WebSocket.CLOSED;
   }
 
-  connect(addr: ServerAddress): void {
+  connect(addr: ServerAddress, token: string): void {
     this.close();
     const socket = new WebSocket(wsUrl(addr));
     this.socket = socket;
 
     socket.onopen = () => {
+      // Immediately authenticate upon connection opening
+      try {
+        socket.send(
+          JSON.stringify({
+            v: PROTOCOL_VERSION,
+            type: "auth",
+            token,
+          })
+        );
+      } catch {
+        // Socket may have closed immediately
+      }
       this.handlers.onOpen?.();
     };
 
@@ -107,7 +125,7 @@ export class ChatSocket {
           this.handlers.onFrame?.(data);
         }
       } catch {
-        // ignore non-JSON frames from server
+        // ignore non-JSON or unsupported frames
       }
     };
   }
@@ -117,14 +135,6 @@ export class ChatSocket {
       throw new Error("WebSocket is not open");
     }
     this.socket.send(JSON.stringify(frame));
-  }
-
-  join(displayName: string): void {
-    this.send({
-      v: PROTOCOL_VERSION,
-      type: "join",
-      display_name: displayName,
-    });
   }
 
   chat(text: string): void {
