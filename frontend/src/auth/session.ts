@@ -16,23 +16,31 @@ export function loadSession(): AuthSessionData | null {
   try {
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<AuthSessionData>;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const token =
+      typeof parsed.token === "string"
+        ? parsed.token
+        : typeof parsed.access_token === "string"
+        ? parsed.access_token
+        : null;
+
     if (
-      typeof parsed.token === "string" &&
+      token &&
       parsed.user &&
-      typeof parsed.user.id === "number" &&
-      typeof parsed.user.username === "string" &&
-      (parsed.user.role === "user" || parsed.user.role === "analyst") &&
+      typeof parsed.user === "object" &&
+      typeof (parsed.user as AuthUser).id === "number" &&
+      typeof (parsed.user as AuthUser).username === "string" &&
+      ((parsed.user as AuthUser).role === "user" ||
+        (parsed.user as AuthUser).role === "analyst") &&
       typeof parsed.expires_at === "string"
     ) {
       return {
-        token: parsed.token,
-        user: parsed.user,
+        token,
+        user: parsed.user as AuthUser,
         expires_at: parsed.expires_at,
       };
     }
   } catch {
-    // ignore parse error and clear corrupt data
     sessionStorage.removeItem(SESSION_KEY);
   }
   return null;
@@ -45,4 +53,3 @@ export function saveSession(data: AuthSessionData): void {
 export function clearSession(): void {
   sessionStorage.removeItem(SESSION_KEY);
 }
-

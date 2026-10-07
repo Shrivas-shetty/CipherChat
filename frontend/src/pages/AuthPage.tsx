@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, requestJson } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
-import type { AuthSessionData, AuthUser } from "../auth/session";
+import type { AuthUser } from "../auth/session";
 import { ServerAddressInput } from "../components/ServerAddressInput";
 import type { ServerAddress } from "../config/serverAddress";
 
@@ -120,24 +120,50 @@ export function AuthPage({ serverAddress, onServerAddressChange }: Props) {
         });
 
         // 2. Automatically log in after registration
-        const loginData = await requestJson<AuthSessionData>("/api/auth/login", {
+        const loginData = await requestJson<{
+          access_token?: string;
+          token?: string;
+          user: AuthUser;
+          expires_at: string;
+        }>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({
             username: trimmedUser,
             password,
           }),
         });
-        loginSuccess(loginData);
+        const token = loginData.token || loginData.access_token;
+        if (!token) {
+          throw new Error("Missing token in login response");
+        }
+        loginSuccess({
+          token,
+          user: loginData.user,
+          expires_at: loginData.expires_at,
+        });
       } else {
         // Login mode
-        const loginData = await requestJson<AuthSessionData>("/api/auth/login", {
+        const loginData = await requestJson<{
+          access_token?: string;
+          token?: string;
+          user: AuthUser;
+          expires_at: string;
+        }>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({
             username: trimmedUser,
             password,
           }),
         });
-        loginSuccess(loginData);
+        const token = loginData.token || loginData.access_token;
+        if (!token) {
+          throw new Error("Missing token in login response");
+        }
+        loginSuccess({
+          token,
+          user: loginData.user,
+          expires_at: loginData.expires_at,
+        });
       }
     } catch (err: unknown) {
       if (err instanceof ApiError) {

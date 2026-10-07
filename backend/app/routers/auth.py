@@ -235,6 +235,7 @@ async def login(
 
     return {
         "access_token": token,
+        "token": token,
         "token_type": "bearer",
         "expires_at": to_iso_z(expires_at),
         "user": {
