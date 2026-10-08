@@ -24,6 +24,12 @@ USERNAME_MAX = 20
 PASSWORD_MIN_BYTES = 8
 PASSWORD_MAX_BYTES = 72
 
+# Phase 4 Message & Tamper Demo settings
+TAMPER_DEMO_ENABLED = os.getenv("TAMPER_DEMO_ENABLED", "true").lower() in ("1", "true", "yes")
+MESSAGE_PLAINTEXT_MAX_CHARS = 2000
+MESSAGE_PLAINTEXT_MAX_BYTES = 8000
+MESSAGE_CIPHERTEXT_MAX_BYTES = 8192
+
 
 def get_jwt_secret() -> str:
     env_secret = os.getenv("JWT_SECRET")

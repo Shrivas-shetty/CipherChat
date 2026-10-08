@@ -110,6 +110,25 @@ export type IncomingSessionTerminated = {
   reason: string;
 };
 
+export type IncomingMessageAvailable = {
+  v: 1;
+  type: "message_available";
+  session_id: string;
+  message_id: number;
+  from_role: "I" | "R";
+  counter: number;
+};
+
+export type IncomingMessageStatus = {
+  v: 1;
+  type: "message_status";
+  session_id: string;
+  message_id: number;
+  counter: number;
+  status: "verified" | "failed";
+  reason?: string;
+};
+
 export type IncomingChat = {
   v: 1;
   type: "chat";
@@ -148,6 +167,8 @@ export type IncomingFrame =
   | IncomingKeyConfirm
   | IncomingSessionEstablished
   | IncomingSessionTerminated
+  | IncomingMessageAvailable
+  | IncomingMessageStatus
   | IncomingChat
   | IncomingPeerLeft
   | IncomingError;

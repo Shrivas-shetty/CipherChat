@@ -103,11 +103,11 @@ def test_chat_blocked_without_session(client: TestClient):
         assert status["type"] == "status"
         assert status["state"] == "waiting"
 
-        # Attempt chat
+        # Attempt chat (plaintext chat frame is disabled in Phase 4)
         ws.send_json({"v": 1, "type": "chat", "text": "Hello world"})
         err = ws.receive_json()
         assert err["type"] == "error"
-        assert err["code"] == "NO_SESSION"
+        assert err["code"] == "BAD_FRAME"
 
 
 def test_happy_path_handshake_and_chat(client: TestClient):
@@ -227,14 +227,11 @@ def test_happy_path_handshake_and_chat(client: TestClient):
         assert est_b["type"] == "session_established"
         assert est_a["fingerprint"] == fp_a
 
-        # Chat works now!
+        # Plaintext chat is rejected with BAD_FRAME in Phase 4
         ws_a.send_json({"v": 1, "type": "chat", "text": "Secret hello from Alice"})
-        chat_a = ws_a.receive_json()
-        chat_b = ws_b.receive_json()
-        assert chat_a["type"] == "chat"
-        assert chat_a["text"] == "Secret hello from Alice"
-        assert chat_b["type"] == "chat"
-        assert chat_b["text"] == "Secret hello from Alice"
+        chat_err = ws_a.receive_json()
+        assert chat_err["type"] == "error"
+        assert chat_err["code"] == "BAD_FRAME"
 
         # Check DB and audit log
         with base.SessionLocal() as db:

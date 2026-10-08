@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { messageService } from "./chat/messageService";
+import type { ChatMessage } from "./chat/types";
 import {
   loadServerAddress,
   saveServerAddress,
@@ -13,7 +15,7 @@ import {
 import { clearSessionKeys } from "./crypto/sessionKeys";
 import { AnalystPage } from "./pages/AnalystPage";
 import { AuthPage } from "./pages/AuthPage";
-import { ChatPage, type ChatMessage } from "./pages/ChatPage";
+import { ChatPage } from "./pages/ChatPage";
 import { ChatSocket, type IncomingFrame } from "./ws/chatSocket";
 
 function MainApp() {
@@ -32,15 +34,32 @@ function MainApp() {
   // Phase 3 Session & Crypto State
   const [sessionStatus, setSessionStatus] = useState<HandshakeStatus>("idle");
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionRole, setSessionRole] = useState<"initiator" | "responder" | null>(null);
+  const [sessionRole, setSessionRole] = useState<
+    "initiator" | "responder" | null
+  >(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
-  const [timings, setTimings] = useState<HandshakeTimings>({ keygen_ms: 0, derive_ms: 0 });
+  const [timings, setTimings] = useState<HandshakeTimings>({
+    keygen_ms: 0,
+    derive_ms: 0,
+  });
   const [failureReason, setFailureReason] = useState<string | null>(null);
-  const [terminationReason, setTerminationReason] = useState<string | null>(null);
+  const [terminationReason, setTerminationReason] = useState<string | null>(
+    null
+  );
 
   const socketRef = useRef<ChatSocket | null>(null);
   const handshakeRef = useRef<HandshakeRunner | null>(null);
   const intentionalCloseRef = useRef(false);
+  const peerNameRef = useRef<string | null>(null);
+  const sessionRoleRef = useRef<"initiator" | "responder" | null>(null);
+
+  // Subscribe to messageService updates
+  useEffect(() => {
+    const unsub = messageService.subscribe((msgs) => {
+      setMessages(msgs);
+    });
+    return () => unsub();
+  }, []);
 
   function handleServerAddressChange(addr: ServerAddress) {
     setServerAddress(addr);
@@ -50,17 +69,19 @@ function MainApp() {
   function resetChatState() {
     setRoomState("waiting");
     setPeerName(null);
+    peerNameRef.current = null;
     setPeerLeftNotice(false);
-    setMessages([]);
     setDisconnected(false);
     setWsError(null);
 
-    // Reset crypto & session state
+    // Reset messages and crypto & session state
+    messageService.reset();
     handshakeRef.current?.reset();
     clearSessionKeys();
     setSessionStatus("idle");
     setSessionId(null);
     setSessionRole(null);
+    sessionRoleRef.current = null;
     setFingerprint(null);
     setFailureReason(null);
     setTerminationReason(null);
@@ -87,6 +108,7 @@ function MainApp() {
             setFailureReason(hr.failureReason);
             setTerminationReason(hr.terminationReason);
             setSessionRole(hr.role);
+            sessionRoleRef.current = hr.role;
             setSessionId(hr.sessionId);
           }
         },
@@ -128,6 +150,7 @@ function MainApp() {
         }
         setDisconnected(true);
         handshakeRef.current?.handleSessionTerminated("", "disconnect");
+        clearSessionKeys();
       },
       onFrame: (frame: IncomingFrame) => {
         switch (frame.type) {
@@ -137,12 +160,21 @@ function MainApp() {
             break;
           case "status":
             setRoomState(frame.state);
-            setPeerName(frame.peer?.username ?? null);
+            {
+              const name = frame.peer?.username ?? null;
+              setPeerName(name);
+              peerNameRef.current = name;
+            }
             if (frame.state === "paired") {
               setPeerLeftNotice(false);
             }
             break;
           case "session_start":
+            messageService.reset();
+            peerNameRef.current = frame.peer.username;
+            setPeerName(frame.peer.username);
+            sessionRoleRef.current = frame.role;
+            setSessionRole(frame.role);
             handshakeRef.current?.startSession(
               frame.session_id,
               frame.role,
@@ -172,23 +204,32 @@ function MainApp() {
               frame.session_id,
               frame.reason
             );
+            clearSessionKeys();
             break;
-          case "chat":
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: frame.id,
-                text: frame.text,
-                ts: frame.ts,
-                sender: frame.sender,
-                mine: frame.sender.user_id === user.id.toString(),
-              },
-            ]);
+          case "message_available":
+            messageService.enqueueIncoming(
+              frame.session_id,
+              frame.message_id,
+              frame.from_role,
+              frame.counter,
+              peerNameRef.current ?? "Peer"
+            );
+            break;
+          case "message_status":
+            messageService.handleMessageStatus(
+              frame.message_id,
+              frame.counter,
+              frame.status,
+              frame.reason
+            );
             break;
           case "peer_left":
             handshakeRef.current?.handleSessionTerminated("", "disconnect");
+            clearSessionKeys();
+            messageService.reset();
             setPeerLeftNotice(true);
             setPeerName(null);
+            peerNameRef.current = null;
             break;
           case "error":
             if (frame.code === "UNAUTHORIZED") {
@@ -223,15 +264,16 @@ function MainApp() {
       socketRef.current = null;
       handshakeRef.current?.reset();
       clearSessionKeys();
+      messageService.reset();
     };
   }, [token, user?.id, user?.role, serverAddress, logout, setAuthError]);
 
-  function onSend(text: string) {
-    try {
-      socketRef.current?.chat(text);
-    } catch {
-      setDisconnected(true);
+  async function onSend(text: string) {
+    if (!user || !sessionRoleRef.current) {
+      throw new Error("No active secure session");
     }
+    const roleCode = sessionRoleRef.current === "initiator" ? "I" : "R";
+    await messageService.sendText(text, user.username, roleCode);
   }
 
   function handleRequestSession() {
@@ -247,6 +289,7 @@ function MainApp() {
     socketRef.current?.close();
     handshakeRef.current?.reset();
     clearSessionKeys();
+    messageService.reset();
     void logout();
   }
 

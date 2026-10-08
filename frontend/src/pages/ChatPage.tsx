@@ -1,13 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import type { ChatMessage } from "../chat/types";
 import type { HandshakeStatus, HandshakeTimings } from "../crypto/handshake";
 
-export type ChatMessage = {
-  id: string;
-  text: string;
-  ts: string;
-  sender: { user_id: string; username: string };
-  mine: boolean;
-};
+export type { ChatMessage };
 
 type RoomState = "waiting" | "paired";
 
@@ -27,7 +22,7 @@ type Props = {
   failureReason: string | null;
   terminationReason: string | null;
   onRequestSession: () => void;
-  onSend: (text: string) => void;
+  onSend: (text: string) => Promise<void> | void;
   onLogout: () => void;
   onReconnect: () => void;
 };
@@ -53,6 +48,8 @@ export function ChatPage({
   onReconnect,
 }: Props) {
   const [draft, setDraft] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,12 +95,21 @@ export function ChatPage({
     return { text: "Connected", statusClass: "paired" };
   }
 
-  function handleSend(e: FormEvent) {
+  async function handleSend(e: FormEvent) {
     e.preventDefault();
     const text = draft.trim();
-    if (!text || !isChatAllowed) return;
-    onSend(text);
-    setDraft("");
+    if (!text || !isChatAllowed || isSending) return;
+    setSendError(null);
+    setIsSending(true);
+    try {
+      await onSend(text);
+      setDraft("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to send message";
+      setSendError(msg);
+    } finally {
+      setIsSending(false);
+    }
   }
 
   const isConnectionDown = disconnected || Boolean(wsError);
@@ -167,7 +173,8 @@ export function ChatPage({
               </div>
               <p className="crypto-explainer">
                 Diffie-Hellman RFC 3526 Group 14 (2048-bit MODP safe prime) + HKDF-SHA256 (RFC 5869).
-                Private exponents and shared secrets never leave your browser. Server acts solely as a blind relay.
+                End-to-end encrypted with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC).
+                Keys and plaintexts never touch server disk or network.
               </p>
             </div>
           </details>
@@ -219,49 +226,190 @@ export function ChatPage({
                 {sessionStatus === "negotiating"
                   ? "Negotiating Diffie-Hellman keys…"
                   : sessionStatus === "established"
-                  ? "No messages yet. Chat is secure."
+                  ? "No messages yet. Chat is end-to-end encrypted."
                   : "Waiting for secure session…"}
               </p>
             ) : (
-              messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`bubble-row ${m.mine ? "mine" : "theirs"}`}
-                >
-                  <div className="bubble">
-                    <span className="bubble-meta">
-                      {m.mine ? "You" : m.sender.username}
-                    </span>
-                    <p className="bubble-text">{m.text}</p>
+              messages.map((m) => {
+                const isMine = m.mine;
+                const isFailed =
+                  m.status === "received_failed" || m.status === "failed_at_peer";
+
+                return (
+                  <div
+                    key={`${m.id}-${m.counter}`}
+                    className={`bubble-row ${isMine ? "mine" : "theirs"}`}
+                  >
+                    <div
+                      className={`bubble ${
+                        m.status === "received_failed" ? "bubble-tampered" : ""
+                      }`}
+                    >
+                      <div className="bubble-header">
+                        <span className="bubble-meta">
+                          {isMine ? "You" : m.senderUsername}
+                        </span>
+                        {m.ts && (
+                          <span className="bubble-time">
+                            {new Date(m.ts).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Decrypted or Tampered Text */}
+                      {m.status === "received_failed" ? (
+                        <p className="bubble-text tampered-text">
+                          ⚠️ [message could not be verified, not decrypted]
+                        </p>
+                      ) : (
+                        <p className="bubble-text">{m.text}</p>
+                      )}
+
+                      {/* Status Badge */}
+                      <div className="bubble-footer">
+                        {isMine ? (
+                          <span className={`msg-status ${m.status}`}>
+                            {m.status === "sending" && "Sending…"}
+                            {m.status === "sent" && "Sent"}
+                            {m.status === "verified_by_peer" && "✓ Verified by peer"}
+                            {m.status === "failed_at_peer" &&
+                              `✗ Integrity failed at peer (${
+                                m.failureReason || "error"
+                              })`}
+                          </span>
+                        ) : (
+                          <span className={`msg-status ${m.status}`}>
+                            {m.status === "received_verified" &&
+                              "🛡️ Integrity verified"}
+                            {m.status === "received_failed" &&
+                              `⚠️ Integrity FAILED (${
+                                m.failureReason || "error"
+                              })`}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Collapsible Wire View (Demo Only) */}
+                      {m.wire && (
+                        <details className="wire-details">
+                          <summary>Wire view (demo only)</summary>
+                          <div className="wire-content">
+                            <div className="wire-header-label">
+                              What the server and Wireshark see
+                            </div>
+                            <div className="wire-table">
+                              <div className="wire-row">
+                                <span className="wire-key">Counter:</span>
+                                <code className="wire-val">{m.wire.counter}</code>
+                              </div>
+                              <div className="wire-row">
+                                <span className="wire-key">IV (16B):</span>
+                                <code className="wire-val wire-mono">
+                                  {m.wire.ivHex}
+                                </code>
+                              </div>
+                              <div className="wire-row">
+                                <span className="wire-key">Ciphertext:</span>
+                                <code
+                                  className="wire-val wire-mono"
+                                  title={m.wire.ctHex}
+                                >
+                                  {m.wire.ctHex.length > 64
+                                    ? `${m.wire.ctHex.slice(0, 64)}…`
+                                    : m.wire.ctHex}{" "}
+                                  ({m.wire.ctLength} bytes)
+                                </code>
+                              </div>
+                              <div className="wire-row">
+                                <span className="wire-key">HMAC (32B):</span>
+                                <code className="wire-val wire-mono">
+                                  {m.wire.hmacHex}
+                                </code>
+                              </div>
+                              <div className="wire-row">
+                                <span className="wire-key">Latency:</span>
+                                <span className="wire-val">
+                                  {m.wire.latencyMs} ms
+                                </span>
+                              </div>
+                              <div className="wire-row">
+                                <span className="wire-key">Verification:</span>
+                                <span
+                                  className={`wire-val ${
+                                    m.wire.verified
+                                      ? "verified-text"
+                                      : isFailed
+                                      ? "failed-text"
+                                      : ""
+                                  }`}
+                                >
+                                  {m.wire.verified
+                                    ? "Verified (HMAC valid)"
+                                    : m.wire.reason
+                                    ? `Failed (${m.wire.reason})`
+                                    : isMine
+                                    ? m.status === "verified_by_peer"
+                                      ? "Verified by peer"
+                                      : m.status === "failed_at_peer"
+                                      ? `Failed at peer (${m.failureReason})`
+                                      : "Awaiting peer confirmation"
+                                    : "Pending"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </details>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
+
+          {sendError && (
+            <div className="send-error-bar" role="alert">
+              <span>⚠️ {sendError}</span>
+              <button
+                type="button"
+                className="btn-dismiss"
+                onClick={() => setSendError(null)}
+                aria-label="Dismiss error"
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           <form className="composer" onSubmit={handleSend}>
             <input
               className="text-input"
               type="text"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (sendError) setSendError(null);
+              }}
               placeholder={
                 sessionStatus === "negotiating"
                   ? "Negotiating keys with peer…"
                   : isChatAllowed
-                  ? "Type a message…"
+                  ? "Type an encrypted message…"
                   : "Waiting for secure session…"
               }
               maxLength={2000}
-              disabled={!isChatAllowed}
+              disabled={!isChatAllowed || isSending}
               autoComplete="off"
             />
             <button
               type="submit"
               className="btn primary"
-              disabled={!isChatAllowed || !draft.trim()}
+              disabled={!isChatAllowed || !draft.trim() || isSending}
             >
-              Send
+              {isSending ? "Sending…" : "Send"}
             </button>
           </form>
         </>

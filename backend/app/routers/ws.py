@@ -217,36 +217,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             if msg_type == "chat":
-                if not coordinator.is_established():
-                    await _send_error(
-                        websocket,
-                        "NO_SESSION",
-                        "No secure session established",
-                    )
-                    continue
-
-                raw_text = data.get("text")
-                if not isinstance(raw_text, str):
-                    await _send_error(websocket, "BAD_FRAME", "text must be a string")
-                    continue
-                text = raw_text.strip()
-                if not (CHAT_TEXT_MIN <= len(text) <= CHAT_TEXT_MAX):
-                    await _send_error(
-                        websocket,
-                        "BAD_FRAME",
-                        f"text must be {CHAT_TEXT_MIN}–{CHAT_TEXT_MAX} characters",
-                    )
-                    continue
-
-                # TEMP plaintext, replaced in Phase 4
-                payload = _envelope(
-                    "chat",
-                    id=str(uuid4()),
-                    sender={"user_id": user_id_str, "username": user_name},
-                    text=text,
-                    ts=_iso_utc_now(),
+                await _send_error(
+                    websocket,
+                    "BAD_FRAME",
+                    "Plaintext chat disabled in Phase 4; use REST message endpoints",
                 )
-                await manager.broadcast_json(payload)
                 continue
 
             await _send_error(websocket, "BAD_FRAME", f"Unknown type: {msg_type}")

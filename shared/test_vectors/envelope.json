@@ -1,0 +1,43 @@
+{
+  "description": "CipherChat Phase 4 AES-256-CBC + HMAC-SHA256 envelope test vectors",
+  "cipher": "aes-256-cbc-pkcs7",
+  "mac": "hmac-sha256",
+  "k_enc_hex": "ee986f66e2d764c00fa10cb72b4dd3cf62fc310ad65dea9f920d24c6a5a5f11a",
+  "k_mac_hex": "47406beb19559ed4bb7604e6148f8dc59726294160905ab58918982e0a763dc2",
+  "cases": [
+    {
+      "name": "case1_ascii",
+      "session_id": "a1b2c3d4-e5f6-47a8-9b0c-1d2e3f4a5b6c",
+      "sender_role": "I",
+      "counter": 1,
+      "msg_type": "text",
+      "meta_json": "{}",
+      "plaintext": "Hello, Bob! Secure AES-256-CBC chat.",
+      "plaintext_hex": "48656c6c6f2c20426f622120536563757265204145532d3235362d43424320636861742e",
+      "iv_hex": "000102030405060708090a0b0c0d0e0f",
+      "iv_b64": "AAECAwQFBgcICQoLDA0ODw==",
+      "mac_input_hex": "4343312d6d73670000002461316232633364342d653566362d343761382d396230632d31643265336634613562366300000001490000000800000000000000010000000474657874000000027b7d00000010000102030405060708090a0b0c0d0e0f000000306e6afd5573cc8acbdc5492044346a76267358fe006c736c8e463ae9f2b00650cf78bdd2931537805051fba722124ed50",
+      "ct_hex": "6e6afd5573cc8acbdc5492044346a76267358fe006c736c8e463ae9f2b00650cf78bdd2931537805051fba722124ed50",
+      "ct_b64": "bmr9VXPMisvcVJIEQ0anYmc1j+AGxzbI5GOunysAZQz3i90pMVN4BQUfunIhJO1Q",
+      "hmac_hex": "d023570c80d37c14274d22ecf9cb72bbdf05bff11a4308555bb39134896be2ae",
+      "hmac_b64": "0CNXDIDTfBQnTSLs+ctyu98Fv/EaQwhVW7ORNIlr4q4="
+    },
+    {
+      "name": "case2_unicode_emoji",
+      "session_id": "a1b2c3d4-e5f6-47a8-9b0c-1d2e3f4a5b6c",
+      "sender_role": "R",
+      "counter": 1,
+      "msg_type": "text",
+      "meta_json": "{}",
+      "plaintext": "\ud83d\udd10 CipherChat encrypted message with accents: voil\u00e0, caf\u00e9 & emojis: \ud83d\udee1\ufe0f\ud83d\ude80",
+      "plaintext_hex": "f09f9490204369706865724368617420656e63727970746564206d657373616765207769746820616363656e74733a20766f696cc3a02c20636166c3a9202620656d6f6a69733a20f09f9ba1efb88ff09f9a80",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "iv_b64": "EBESExQVFhcYGRobHB0eHw==",
+      "mac_input_hex": "4343312d6d73670000002461316232633364342d653566362d343761382d396230632d31643265336634613562366300000001520000000800000000000000010000000474657874000000027b7d00000010101112131415161718191a1b1c1d1e1f0000006048727989ad38db96c5697d108a37fbd36eab8c92b17897113780395aed3d440b514953dc06486cac8d08a12b31d58af621a86c944f63df5da7f5b4d2a56d9e24d18358296dfc71ce3fdad30cdcdca8f27474a61cfbdd83bdc8eebf0c382da1fd",
+      "ct_hex": "48727989ad38db96c5697d108a37fbd36eab8c92b17897113780395aed3d440b514953dc06486cac8d08a12b31d58af621a86c944f63df5da7f5b4d2a56d9e24d18358296dfc71ce3fdad30cdcdca8f27474a61cfbdd83bdc8eebf0c382da1fd",
+      "ct_b64": "SHJ5ia0425bFaX0Qijf7026rjJKxeJcRN4A5Wu09RAtRSVPcBkhsrI0IoSsx1Yr2IahslE9j312n9bTSpW2eJNGDWClt/HHOP9rTDNzcqPJ0dKYc+92Dvcjuvww4LaH9",
+      "hmac_hex": "20b57b11cce473b075f78443a0333223de6d298f78d03046a9ed0e5b8620783d",
+      "hmac_b64": "ILV7Eczkc7B194RDoDMyI95tKY940DBGqe0OW4YgeD0="
+    }
+  ]
+}

@@ -1,25 +1,27 @@
-# CipherChat (Phase 3)
+# CipherChat (Phase 4)
 
-Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and a blind server relay architecture.
+Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and **end-to-end encrypted messaging with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC)** over a blind server relay architecture.
 
-> [!WARNING]
-> **Known Limitation (Educational LAN Analysis):**
-> Wire traffic is plain HTTP/WS, and chat message relay is still plaintext in Phase 3 (marked `TEMP`). End-to-end message encryption with AES-GCM/CBC and HMAC verification will be added in Phase 4. However, Diffie-Hellman keys, shared secrets, and HKDF session keys are already derived purely in-browser and NEVER touch the server.
+> [!NOTE]
+> **Zero Knowledge & Blind Server Relay:**
+> Plaintext never leaves the sender's browser, and session keys ($K_{enc}, K_{mac}$) never touch the server or leave memory. The server acts purely as an untrusted blind relay, validating envelope structure and relaying base64 payloads without the ability to inspect or tamper with plaintext.
 
 ---
 
-## Core Principle: Blind Server Relay
+## Core Principles
 
-The server operates strictly as a **blind relay** for the key exchange:
-- **Relay Only:** Relays `session_start`, `dh_public`, and `key_confirm` frames between participants.
-- **Validation:** Verifies parameter formats and checks that public values fall within the safe prime subgroup range ($2 \le y \le P - 2$).
-- **Zero Knowledge:** The server never computes, inspects, receives, or stores any private exponent ($x$), shared secret ($Z$), or derived key ($K_{enc}, K_{mac}$).
-- **Enforcement:** Enforced in code and guaranteed by automated source grep tests in `backend/app/tests/test_session_lifecycle.py`.
+1. **Blind Server Relay:** The server never has $K_{enc}$ or $K_{mac}$, never computes or verifies HMACs, and never decrypts ciphertexts. Enforced by design and verified by automated source-grep tests.
+2. **Zero Plaintext Persistence:** Plaintext never touches server disk (`app.db`), server logs, or WebSocket frames.
+3. **Encrypt-then-MAC with Strict Verification Order:**
+   $$\text{Format Validation} \longrightarrow \text{Replay Guard Check} \longrightarrow \text{HMAC Verification} \longrightarrow \text{AES Decryption + PKCS\#7 Unpad}$$
+   If format, replay counter, or HMAC tag verification fails, **ciphertext is NEVER decrypted**.
+4. **Replay Protection:** Per direction, per session counters enforce $\text{counter} > \text{last\_accepted}$. Decrements, duplicates, and replays are rejected.
 
 ---
 
 ## Cryptographic Specification
 
+### Session Key Establishment (Phase 3)
 | Component | Specification |
 | :--- | :--- |
 | **DH Group** | RFC 3526 Group 14 (2048-bit MODP safe prime), generator $g = 2$ |
@@ -32,7 +34,20 @@ The server operates strictly as a **blind relay** for the key exchange:
 | **Derived Keys** | $K_{enc}$ (32B with `"CipherChat v1 enc"`), $K_{mac}$ (32B with `"CipherChat v1 mac"`), Fingerprint (8B with `"CipherChat v1 fingerprint"`) |
 | **Fingerprint Format** | 4 groups of 4 uppercase hex characters separated by spaces (e.g. `60B3 9698 05E7 205C`) |
 | **Confirmation Tag** | $\text{HMAC-SHA256}(K_{mac}, \text{"CC1-confirm"} \parallel \text{session\_id} \parallel \text{role\_char})$, verified in constant time |
-| **Key Memory Safety** | Ephemeral in-memory store; byte arrays wiped with zeros (`fill(0)`) on session termination/logout/unmount |
+
+### End-to-End Encrypted Messages (Phase 4)
+| Component | Specification |
+| :--- | :--- |
+| **Cipher** | AES-256-CBC with PKCS#7 padding |
+| **Encryption Key** | $K_{enc}$ (32 bytes derived via HKDF) |
+| **IV** | Fresh random 16 bytes per message from CSPRNG (`crypto.getRandomValues` / `os.urandom`) |
+| **Counter** | 64-bit unsigned big-endian integer, strictly monotonically increasing per sender direction |
+| **Message Type** | `"text"` (1–2000 characters, $\le 8000$ UTF-8 bytes) |
+| **Metadata** | Deterministic JSON string `"{}"` |
+| **Canonical MAC Input** | ASCII `"CC1-msg"` followed by 4-byte big-endian lengths and values: `session_id`, `sender_role` (`"I"` or `"R"`), `counter` (8 bytes), `msg_type`, `meta_json`, `iv` (16 bytes), `ciphertext` |
+| **Integrity Tag** | $\text{HMAC-SHA256}(K_{mac}, \text{MAC input})$ (32 bytes, constant-time compared) |
+| **Replay Protection** | ReplayGuard ensures $\text{counter} > \text{last}$; resets on session termination |
+| **Failure Reasons** | `"bad_format"`, `"replay"`, `"hmac_mismatch"`, `"decrypt_error"` |
 
 ---
 
@@ -42,46 +57,88 @@ The server operates strictly as a **blind relay** for the key exchange:
 CipherChat/
 ├── backend/                  FastAPI + WebSocket server (SQLAlchemy 2.0 + SQLite)
 │   ├── app/
-│   │   ├── config.py         Config, DB_PATH, JWT settings, lockout policy
+│   │   ├── config.py         Config, DB_PATH, JWT settings, tamper demo flag
 │   │   ├── deps.py           Auth dependencies (get_current_user, require_role)
-│   │   ├── main.py           FastAPI app, lifespan DB init, server restart cleanup, SPA serving
-│   │   ├── crypto/           Server-side reference crypto & verification
-│   │   │   ├── params.py     RFC 3526 Group 14 prime P, generator G, and protocol constants
+│   │   ├── main.py           FastAPI app, lifespan DB init, router registration
+│   │   ├── crypto/           Reference crypto & verification (server never uses keys in live paths)
+│   │   │   ├── params.py     RFC 3526 Group 14 parameters
 │   │   │   ├── dh.py         Public key validation & DH reference operations
-│   │   │   └── kdf.py        HKDF-SHA256 key derivation & confirmation tag reference
+│   │   │   ├── kdf.py        HKDF-SHA256 key derivation & confirmation reference
+│   │   │   └── envelope.py   AES-256-CBC + HMAC-SHA256 reference and NIST SP 800-38A tests
 │   │   ├── db/
 │   │   │   ├── base.py       SQLAlchemy engine, WAL PRAGMA, SessionLocal, init_db
-│   │   │   └── models.py     User, AuthSession, AuditLog, ChatSession models
+│   │   │   └── models.py     User, AuthSession, AuditLog, ChatSession, Message models
 │   │   ├── routers/
 │   │   │   ├── auth.py       /api/auth (register, login, logout, me)
+│   │   │   ├── admin.py      /api/admin/tamper (analyst tamper simulation toggle)
+│   │   │   ├── messages.py   /api/messages (POST send, GET fetch, POST verification)
 │   │   │   ├── health.py     /api/health
-│   │   │   └── ws.py         /ws (authenticated WebSocket endpoint with handshake relay)
-│   │   ├── scripts/          CLI utilities (seed_analyst, show_audit, verify_audit, make_test_vectors)
-│   │   ├── services/         Audit logging with SHA-256 tamper-evident hash chaining
-│   │   ├── tests/            Pytest auth, crypto, and session lifecycle test suites
-│   │   └── ws/
-│   │       ├── manager.py    Active ConnectionManager
-│   │       └── session_coordinator.py Handshake state machine & 15s timeout watcher
+│   │   │   └── ws.py         /ws (WebSocket relay for handshake & message availability)
+│   │   ├── services/         Audit logging with SHA-256 hash chaining & tamper service
+│   │   ├── tests/            Pytest test suites (auth, crypto, session lifecycle, envelope, messages API)
+│   │   └── ws/               ConnectionManager & session coordinator
 │   └── data/                 SQLite database (app.db) and generated jwt_secret
 ├── frontend/                 Vite + React 19 + TypeScript SPA
 │   └── src/
 │       ├── api/              HTTP client (http.ts) with Bearer token & 401 handler
 │       ├── auth/             AuthContext & sessionStorage manager
+│       ├── chat/             Chat types & messageService (serial processing queue, send/verify)
 │       ├── components/       ServerAddressInput
 │       ├── crypto/           In-browser cryptographic implementation
 │       │   ├── params.ts     RFC 3526 Group 14 constants & byte lengths
 │       │   ├── encoding.ts   Strict hex/byte/bigint conversions
+│       │   ├── base64.ts     Strict Base64 byte conversions
 │       │   ├── modpow.ts     Square-and-multiply BigInt modular exponentiation
 │       │   ├── dh.ts         Browser DH key generation & shared secret computation
 │       │   ├── kdf.ts        HKDF derivation, fingerprinting, confirmation tags
+│       │   ├── envelope.ts   AES-256-CBC + HMAC-SHA256 encryption, canonical MAC, decryption
+│       │   ├── replayGuard.ts Monotonic counter tracking per sender role
 │       │   ├── sessionKeys.ts Ephemeral in-memory key storage with zeroing
 │       │   ├── handshake.ts  HandshakeRunner client-side state machine
-│       │   └── __tests__/    Vitest test suite verifying against shared vectors
-│       ├── pages/            AuthPage, ChatPage, AnalystPage
-│       └── ws/               ChatSocket (v1 protocol with DH frame types)
+│       │   └── __tests__/    Vitest test suites verifying envelope & shared vectors
+│       ├── pages/            AuthPage, ChatPage (with Wire View), AnalystPage (with Tamper Panel)
+│       └── ws/               ChatSocket (v1 protocol with DH & message notifications)
 └── shared/
     └── test_vectors/
-        └── dh_hkdf.json      Deterministic cross-language DH & HKDF test vectors
+        ├── dh_hkdf.json      Deterministic cross-language DH & HKDF test vectors
+        └── envelope.json     Deterministic cross-language message envelope test vectors
+```
+
+---
+
+## Message Relay Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice (Browser)
+    participant Server as CipherChat Server
+    actor Bob as Bob (Browser)
+
+    Note over Alice,Bob: Session established with K_enc and K_mac in browser memory
+
+    Alice->>Alice: AES-256-CBC encrypt(K_enc, IV, text)
+    Alice->>Alice: HMAC-SHA256(K_mac, MAC input)
+    Alice->>Server: POST /api/messages (iv, ct, hmac, counter, session_id)
+    Server->>Server: Validate envelope format & persist BLOBs
+    Server-->>Alice: 201 Created (message_id)
+    Server-)Bob: WS frame: message_available (message_id, counter)
+
+    Bob->>Server: GET /api/messages/{id}
+    Server-->>Bob: 200 OK (iv, ct, hmac, counter)
+    
+    Bob->>Bob: Check format & ReplayGuard (counter > last)
+    Bob->>Bob: Constant-time verify HMAC-SHA256(K_mac, MAC input)
+    alt HMAC Valid
+        Bob->>Bob: AES-256-CBC decrypt(K_enc, IV, ct) -> Plaintext
+        Bob->>Server: POST /api/messages/{id}/verification {"status": "verified"}
+        Server-)Alice: WS frame: message_status {"status": "verified"}
+    else Tamper Detected
+        Bob->>Bob: ABORT decryption. Plaintext remains untouched.
+        Bob->>Server: POST /api/messages/{id}/verification {"status": "failed", "reason": "hmac_mismatch"}
+        Server->>Server: Log TAMPER_DETECTED alert in audit hash-chain
+        Server-)Alice: WS frame: message_status {"status": "failed", "reason": "hmac_mismatch"}
+    end
 ```
 
 ---
@@ -90,22 +147,11 @@ CipherChat/
 
 ### 1. Backend Setup
 
-From `backend/`:
+From the repository root:
 
-**Windows (PowerShell):**
 ```powershell
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-**macOS / Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
 ### 2. Frontend Setup
@@ -127,28 +173,36 @@ npm run build
 ## Running Automated Tests
 
 ### Backend Tests (pytest)
-Runs auth, crypto DH/KDF, and session lifecycle tests (including blind-relay source grep and 15s timeout watcher):
+Runs auth, crypto DH/KDF, envelope tests, blind-relay source grep, and REST API messages test suite:
 ```powershell
-python -m pytest backend/app/tests -v
+.venv\Scripts\python.exe -m pytest backend/app/tests -v
 ```
+*(41 tests passing)*
 
 ### Frontend Tests (vitest)
-Runs in-browser cryptographic unit tests verifying compliance with `shared/test_vectors/dh_hkdf.json`:
+Runs in-browser cryptographic unit tests, NIST SP 800-38A F.2.5 KAT, replay guards, and cross-language vector validation:
 ```powershell
 cd frontend
 npm test
 ```
+*(12 tests passing)*
 
 ---
 
-## Acceptance Tests (Phase 3)
+## Live Tamper Simulation (Demo Walkthrough)
 
-1. **In-Browser Key Generation & Relay:** Two users log in and connect. Both browser consoles demonstrate BigInt modular exponentiation and send `dh_public`. The server relays the 512-hex public keys blindly.
-2. **Key Confirmation & Fingerprint Matching:** Both browsers verify each other's confirmation tags. Once both send `key_verified`, both receive `session_established` with identical fingerprints (e.g. `60B3 9698 05E7 205C`).
-3. **Session Info & Demo Panel:** Clicking "Key details (demo only)" reveals the session ID, role, keygen latency, and key derivation latency.
-4. **Chat Session Gating:** Chat messages cannot be sent while in `waiting` or `negotiating` states; attempting to send returns `NO_SESSION`. Chat is enabled once established.
-5. **Rejection of Malformed/Out-of-Range Public Keys:** Sending $y < 2$ or $y > P-2$ causes the server to abort the handshake, log `KEY_EXCHANGE_FAILED`, and terminate the session with `bad_public`.
-6. **Handshake Timeout:** If either client fails to complete the handshake within 15 seconds, the server terminates with `handshake_timeout`.
-7. **Clean Session Termination & Ordering:** When one user disconnects or logs out, the peer receives `session_terminated`, then `peer_left`, and then `status: waiting`.
-8. **Memory Hygiene:** Derived session keys are wiped with zeros (`clearSessionKeys()`) on logout, session termination, or unmount.
-9. **Cross-Language Test Vector Consistency:** Both Python pytest and TypeScript Vitest pass all test vector assertions against `shared/test_vectors/dh_hkdf.json`.
+To demonstrate the Encrypt-then-MAC integrity guarantee:
+
+1. **Sign in as Users:** In two browser windows (e.g. Chrome and Firefox), sign in as `alice` and `bob`. Both pair up and complete the DH key exchange to establish a secure session.
+2. **Sign in as Analyst:** In an Incognito window, sign in as an analyst (e.g. `analyst1`).
+3. **Arm Tamper:** In the Analyst Portal, locate the **Tamper Simulation** panel and click **"Arm tamper for the next message"**.
+4. **Send Message:** In Alice's window, type and send a secret message: `"Classified project coordinates"`.
+5. **Observe Verification Failure:**
+   - The server flips 1 bit in the ciphertext during transit.
+   - Bob's browser receives the envelope and evaluates the HMAC **before** attempting decryption.
+   - The tag does not match: Bob's browser displays a red warning badge:  
+     `⚠️ [message could not be verified, not decrypted]`  
+     with status `⚠️ Integrity FAILED (hmac_mismatch)`.
+   - Alice's bubble updates to `✗ Integrity failed at peer (hmac_mismatch)`.
+   - A `TAMPER_DETECTED` alert is permanently committed to the server's SHA-256 audit hash-chain.
+   - Inspecting the **Wire view (demo only)** collapsible drawer on both sides reveals the raw counter, IV, truncated ciphertext, HMAC, and verification status.

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ORIGIN_REGEX
 from app.db.base import init_db
-from app.routers import auth, health, ws
+from app.routers import admin, auth, health, messages, ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +52,8 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router)
     application.include_router(auth.router)
+    application.include_router(messages.router)
+    application.include_router(admin.router)
     application.include_router(ws.router)
 
     dist_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"

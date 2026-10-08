@@ -8,7 +8,9 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -90,5 +92,35 @@ class ChatSession(Base):
 
     user_a = relationship("User", foreign_keys=[user_a_id])
     user_b = relationship("User", foreign_keys=[user_b_id])
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    __table_args__ = (
+        UniqueConstraint("session_id", "sender_role", "counter", name="uq_session_role_counter"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    recipient_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    sender_role = Column(String(1), nullable=False)  # "I" | "R"
+    msg_type = Column(String(20), nullable=False, default="text")
+    counter = Column(Integer, nullable=False)
+    meta_json = Column(String(255), nullable=False, default="{}")
+    iv = Column(LargeBinary(16), nullable=False)
+    ct = Column(LargeBinary, nullable=False)
+    hmac = Column(LargeBinary(32), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    verification_status = Column(String(20), default="pending", nullable=False)  # "pending" | "verified" | "failed"
+    verification_reason = Column(String(50), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    session = relationship("ChatSession")
+    sender = relationship("User", foreign_keys=[sender_id])
+    recipient = relationship("User", foreign_keys=[recipient_id])
+
 
 
