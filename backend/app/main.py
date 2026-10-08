@@ -8,10 +8,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 
-from app.config import CORS_ORIGIN_REGEX
+from app.config import ALLOW_PLAINTEXT_BASELINE, CORS_ORIGIN_REGEX
 from app.db.base import init_db
 from app.db.lab_base import init_lab_db
-from app.routers import admin, auth, dashboard, health, lab, messages, ws
+from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +21,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    if ALLOW_PLAINTEXT_BASELINE:
+        logging.getLogger(__name__).warning("Plaintext baseline endpoints are ENABLED (benchmark use only)")
     init_db()
     init_lab_db()
     from app.db import base
@@ -61,6 +63,16 @@ def create_app() -> FastAPI:
 
     @application.middleware("http")
     async def limit_message_post_size(request, call_next):
+        if request.method == "POST" and request.url.path == "/api/baseline/messages":
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 1_200_000) or len(body) > 1_200_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if request.method == "POST" and request.url.path == "/api/dashboard/bench/runs":
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 512_000) or len(body) > 512_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
         if request.method == "POST" and request.url.path == "/api/messages":
             raw_length = request.headers.get("content-length", "")
             if raw_length.isdigit() and int(raw_length) > 1_200_000:
@@ -75,8 +87,10 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(auth.router)
     application.include_router(messages.router)
+    application.include_router(baseline.router)
     application.include_router(admin.router)
     application.include_router(dashboard.router)
+    application.include_router(bench.router)
     application.include_router(lab.router)
     application.include_router(ws.router)
 

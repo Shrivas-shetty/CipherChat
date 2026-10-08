@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 backend/data/*
+backend/data/bench/
 !backend/data/.gitkeep
 backend/data/app.db
 backend/data/jwt_secret

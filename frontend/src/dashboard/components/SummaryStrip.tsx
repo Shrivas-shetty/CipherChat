@@ -21,6 +21,7 @@ export function SummaryStrip() {
       <div><small>Sessions</small><b>{data.sessions.total}</b></div>
       <div><small>Text metrics</small><b>{data.lab.text_records}</b></div>
       <div><small>Image metrics</small><b>{data.lab.image_records}</b></div>
+      <div><small>Bench runs</small><b>{data.lab.bench_runs}</b></div>
     </div>}
   </section>;
 }

@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models import AuditLog, ChatSession, Message, User, to_iso_z, utc_now
-from app.db.lab_models import ImageMetric, TextMetric
+from app.db.lab_models import BenchRun, ImageMetric, TextMetric
 from app.image import ImageFormatError, parse_image_meta
 from app.ws.manager import manager
 
@@ -14,8 +14,8 @@ EVENT_CATEGORIES: dict[str, list[str]] = {
     "auth": ["REGISTER", "REGISTER_FAILED", "LOGIN_SUCCESS", "LOGIN_FAILED", "LOGIN_LOCKED", "LOGOUT", "TOKEN_REJECTED"],
     "session": ["WS_CONNECTED", "WS_DISCONNECTED", "WS_SUPERSEDED", "ROOM_FULL", "SESSION_WAITING", "SESSION_STARTED", "KEY_EXCHANGE_OK", "KEY_EXCHANGE_FAILED", "SESSION_ENDED"],
     "message": ["MESSAGE_SENT", "MESSAGE_REJECTED", "MESSAGE_VERIFIED", "TAMPER_DETECTED"],
-    "demo": ["TAMPER_ARMED", "TAMPER_DISARMED", "TAMPER_APPLIED"],
-    "lab": ["METRICS_REJECTED", "LAB_DATA_CLEARED"],
+    "demo": ["TAMPER_ARMED", "TAMPER_DISARMED", "TAMPER_APPLIED", "BASELINE_PLAINTEXT_USED"],
+    "lab": ["METRICS_REJECTED", "LAB_DATA_CLEARED", "BENCH_RUN_RECORDED"],
 }
 SEVERITIES = ["info", "warning", "alert"]
 _ALL_CATEGORIZED = {event for events in EVENT_CATEGORIES.values() for event in events}
@@ -218,5 +218,6 @@ def query_summary(db: Session, lab_db: Optional[Session] = None) -> dict[str, An
         "lab": {
             "text_records": (lab_db.query(func.count(TextMetric.id)).scalar() or 0) if lab_db is not None else 0,
             "image_records": (lab_db.query(func.count(ImageMetric.id)).scalar() or 0) if lab_db is not None else 0,
+            "bench_runs": (lab_db.query(func.count(BenchRun.id)).scalar() or 0) if lab_db is not None else 0,
         },
     }

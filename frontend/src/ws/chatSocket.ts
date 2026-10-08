@@ -225,11 +225,13 @@ export class ChatSocket {
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(String(event.data)) as IncomingFrame;
+        const supported = new Set(["joined", "status", "session_start", "dh_public", "key_confirm", "session_established", "session_terminated", "message_available", "message_status", "chat", "peer_left", "error"]);
         if (
           data &&
           typeof data === "object" &&
           data.v === PROTOCOL_VERSION &&
-          typeof data.type === "string"
+          typeof data.type === "string" &&
+          supported.has(data.type)
         ) {
           this.handlers.onFrame?.(data);
         }
