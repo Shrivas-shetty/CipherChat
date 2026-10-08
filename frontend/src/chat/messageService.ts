@@ -15,6 +15,7 @@ import type { ChatMessage, WireDetails } from "./types";
 import { decodeImage, type DecodedImage } from "../image/decode";
 import { ciphertextToNoiseRgb, sha256Hex } from "../image/pipeline";
 import { releaseAllImageUrls, releaseObjectUrl, renderRgbPng } from "../image/render";
+import type { ImageMetricsJobInput, TextMetricsJobInput } from "../analysis/metricsJob";
 
 interface GetMessageResponse {
   id: number;
@@ -49,9 +50,9 @@ export class MessageService {
   private isProcessingQueue: boolean = false;
   private listeners: Set<MessagesListener> = new Set();
   private generation = 0;
-  private textMetricsEnqueuer: ((input: { messageId: number; sessionId: string; pt: Uint8Array; iv: Uint8Array; ct: Uint8Array }) => string | null) | null = null;
+  private metricsEnqueuer: ((input: TextMetricsJobInput | ImageMetricsJobInput) => string | null) | null = null;
 
-  public setTextMetricsEnqueuer(enqueuer: typeof this.textMetricsEnqueuer): void { this.textMetricsEnqueuer = enqueuer; }
+  public setMetricsEnqueuer(enqueuer: typeof this.metricsEnqueuer): void { this.metricsEnqueuer = enqueuer; }
 
   public handleTextMetricsStatus(messageId: number, status: string | null): void {
     const message = this.messages.find((item) => item.mine && item.id === String(messageId));
@@ -119,6 +120,11 @@ export class MessageService {
     const wire: WireDetails = { counter, ivHex: bytesToHex(env.iv), ctHex: bytesToHex(env.ct), ctLength: env.ct.length, hmacHex: bytesToHex(env.hmac), latencyMs: decoded.decodeMs + cryptoMs, verified: false, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, decodeMs: decoded.decodeMs, cryptoMs, pixelHash } };
     const msg: ChatMessage = { id: String(res.id), counter, senderRole, mine: true, senderUsername: currentUsername, text: "", status: "sent", ts: res.created_at, wire, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, pixelHash, url, noiseUrl, decodeMs: decoded.decodeMs, cryptoMs } };
     msg.image!.rgb = new Uint8Array(decoded.rgb);
+    if (this.metricsEnqueuer) {
+      const pixels = new Uint8Array(decoded.rgb), iv = new Uint8Array(env.iv), ct = new Uint8Array(env.ct);
+      try { msg.metricsStatus = this.metricsEnqueuer({ messageId: res.id, sessionId: env.session_id, w: decoded.w, h: decoded.h, pixels, iv, ct }) ?? undefined; }
+      finally { pixels.fill(0); iv.fill(0); ct.fill(0); }
+    }
     this.messages.push(msg); this.notify(); return msg;
   }
 
@@ -183,10 +189,10 @@ export class MessageService {
       wire,
     };
 
-    if (this.textMetricsEnqueuer) {
+    if (this.metricsEnqueuer) {
       const pt = new TextEncoder().encode(text);
       const ivCopy = new Uint8Array(env.iv), ctCopy = new Uint8Array(env.ct);
-      try { myMsg.metricsStatus = this.textMetricsEnqueuer({ messageId: res.id, sessionId: env.session_id, pt, iv: ivCopy, ct: ctCopy }) ?? undefined; }
+      try { myMsg.metricsStatus = this.metricsEnqueuer({ messageId: res.id, sessionId: env.session_id, pt, iv: ivCopy, ct: ctCopy }) ?? undefined; }
       finally { pt.fill(0); ivCopy.fill(0); ctCopy.fill(0); }
     }
 

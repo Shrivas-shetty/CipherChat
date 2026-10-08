@@ -20,6 +20,7 @@ export function SummaryStrip() {
       <div><small>Tamper detections</small><b>{data.security.tamper_detected_total}</b></div>
       <div><small>Sessions</small><b>{data.sessions.total}</b></div>
       <div><small>Text metrics</small><b>{data.lab.text_records}</b></div>
+      <div><small>Image metrics</small><b>{data.lab.image_records}</b></div>
     </div>}
   </section>;
 }

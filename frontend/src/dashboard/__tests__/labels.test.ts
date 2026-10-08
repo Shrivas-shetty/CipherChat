@@ -17,6 +17,8 @@ describe("dashboard labels", () => {
       ["LAB_DATA_CLEARED", "Lab data cleared"],
     ];
     for (const [type, expected, details] of cases) expect(eventLabel(type, details)).toBe(expected);
+    expect(eventLabel("LAB_DATA_CLEARED", { table: "image_metrics" })).toBe("Lab data cleared (image metrics)");
+    expect(eventLabel("LAB_DATA_CLEARED", { table: "text_metrics" })).toBe("Lab data cleared (text metrics)");
     expect(eventLabel("MESSAGE_SENT", { msg_type: "text" })).toBe("Message sent (text)");
   });
   it("maps severity styles and formats UTC timestamps locally", () => {

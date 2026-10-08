@@ -282,7 +282,7 @@ The baseline first re-encrypts the original bytes and aborts if they do not repr
 
 The chat composer has **Collect security metrics (sends numeric results only, never message content)** enabled by default and persisted per browser. Turn it off for clean Wireshark captures. The serial background job yields between trials, caps its queue, retries a transient server/network error once, and is aborted when the session keys are cleared. Only the sender posts metrics; receivers do not.
 
-Metrics are client-reported and cannot be verified by the server. The dashboard can show only the reported statistics and a preview of the first 32 ciphertext bytes. Limitations include browser timer resolution and scheduling noise; the derived exact plaintext byte length leaks a small amount of information; and client-reported observations may be inaccurate or fabricated.
+Metrics are client-reported and cannot be verified by the server. The dashboard shows reported statistics only. Limitations include browser timer resolution and scheduling noise; the derived exact plaintext byte length leaks a small amount of information; and client-reported observations may be inaccurate or fabricated.
 
 ### Phase 7 test commands and acceptance checks
 
@@ -308,3 +308,51 @@ Acceptance walkthrough:
 4. Confirm Bob cannot submit metrics for Alice's message, duplicate submissions return 409, and extra or malformed fields are rejected. Check `METRICS_REJECTED` audit entries and verify the audit chain.
 5. Log Alice out during analysis and confirm queued jobs stop without posting stale-key results. Clear Text Lab data and confirm the charts and rows empty, the `LAB_DATA_CLEARED` event is recorded, and subsequent sends add new rows.
 6. Re-run all earlier phase acceptance checks for handshake, encrypted text and image chat, tamper simulation, and dashboard logs.
+
+## Security metrics (Images) — Phase 8
+
+Image security experiments run locally in the sender's browser after the encrypted image message is stored. The browser uses the exact RGB bytes, AES key, IV, and ciphertext for its baseline check and experiments. None of those inputs, nor modified ciphertexts or decrypted pixels, are included in the metrics request. `POST /api/lab/image-metrics` accepts only a session UUID and strict numeric values/nulls; the server checks ownership, stored image dimensions and ciphertext length, ranges, and consistency, then stores the client-reported values in `backend/data/lab.db`. The server performs no image metric calculations, averages, or regression fits. Only the sender reports; the receiving pipeline is unchanged. Reports are client-reported and cannot be verified by the server.
+
+| Metric | Browser calculation |
+| --- | --- |
+| NPCR | Mean percentage of ciphertext-image byte positions changed after flipping one random plaintext RGB byte's least-significant bit in five trials. |
+| UACI | Mean normalized absolute ciphertext byte intensity change for those same trials. |
+| Entropy | Shannon entropy per RGB channel of the first `width × height × 3` ciphertext bytes. |
+| Horizontal correlation | Pearson correlation across every adjacent horizontal pixel pair per channel, for plaintext and cipher image. |
+| MSE / PSNR | Original vs local decrypted pixels and original vs cipher-image bytes; PSNR is null (infinite) when MSE is zero. |
+| AES timing | Median calibrated browser JavaScript AES-CBC encrypt/decrypt time; no network or image decoding time. |
+
+The baseline re-encryption must exactly match the sent ciphertext or the job aborts. CBC changes a ciphertext block and the suffix after it, while leaving preceding blocks unchanged. Random byte flips therefore average approximately **50% NPCR** and **16.7% UACI**, below the ideal random-cipher references of **99.61%** and **33.46%**. Expected cipher entropy is about `8 - 184/n` bits/channel for `n` pixels; cipher correlation approaches zero while natural-photo plaintext correlation is often high. Correct local decryption yields MSE 0 and infinite PSNR. Natural images commonly produce encrypted-image MSE around 8,000–12,000 and PSNR around 7–10 dB; these are observations, not validation requirements.
+
+The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as horizontal correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
+
+### Phase 8 tests
+
+```powershell
+.venv\Scripts\python.exe -m pytest backend/app/tests backend/tests -v
+cd frontend
+npm test
+npm run build
+```
+
+Regenerate the deterministic cross-language image test vectors with:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m tests.tools.make_image_metric_vectors
+```
+
+### Phase 8 acceptance checks
+
+1. All pytest and Vitest suites pass, including the Python/TypeScript `image_metrics.json` vectors.
+2. Alice and Bob establish a chat. Alice sends about 10 photos and simple graphics at varied sizes up to 512 px. Each enabled image report reaches `recorded`; Bob's verification and pixel hash behavior remains unchanged.
+3. Image Lab thumbnails show colored encrypted noise, and the lightbox shows the full noise at the recorded dimensions. No original or decrypted image is available to the analyst.
+4. NPCR/UACI show individual points, average and dashed ideal reference lines, means around 40–60% and 13–21%, and an approximately flat fit over a sufficiently varied sample.
+5. Cipher entropy is near 8 for large images and lower for small images, with the `8 - 184/n` reference shown.
+6. Plaintext correlations are high for natural photos; cipher correlations are near zero for larger images; 1-pixel-wide images show `n/a`.
+7. Correct local decryptions have zero MSE and show `∞ (identical)`; encrypted-image MSE/PSNR are displayed, with no lossless-failure rows for the correct pipeline.
+8. Performance charts show individual encryption and decryption timings against pixel count.
+9. Disabling collection leaves image sending functional but adds no metrics; enabling it resumes reporting. Metrics request bodies contain only numbers/nulls and the session UUID; distinctive source pixels are absent from `lab.db`.
+10. A recipient cannot post metrics for the sender's image (403); duplicates return 409; extra fields are rejected; mismatched dimensions return `dimension_mismatch`; rejected attempts are audited and audit-chain verification succeeds.
+11. Logging out immediately after a large image send leaves no stale queued metrics post, error spam, or retained job buffers.
+12. Clearing Image Lab data empties its rows/charts and writes the `LAB_DATA_CLEARED` audit event. New image reports work afterward; Text Lab and all prior phase acceptance checks still pass.

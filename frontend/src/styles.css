@@ -854,3 +854,18 @@ body {
 .sort-button { padding: 0 !important; border: 0 !important; background: transparent !important; font: inherit !important; color: inherit !important; }
 .lab-pagination { display: flex; justify-content: center; align-items: center; gap: .75rem; padding-top: .7rem; }
 @media (max-width: 700px) { .lab-plot-layout { grid-template-columns: 23px minmax(0, 1fr); } .lab-chart { height: 320px; } .lab-y-axis-label, .lab-x-axis-label { font-size: .7rem; } .ct-preview { max-width: 130px; } }
+.image-lab { margin-top: .8rem; }
+.image-lab-cards { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.image-analysis-table { min-width: 1050px; }
+.image-average-row { background: #f1f5f9; font-weight: 700; }
+.image-lossy-row { background: #fff1f2; color: #991b1b; }
+.image-records-table { min-width: 980px; }
+.cipher-thumb-button { display: grid; place-items: center; width: 100px; height: 100px; padding: 2px !important; }
+.cipher-thumb { max-width: 96px; max-height: 96px; object-fit: contain; background: repeating-conic-gradient(#ddd 0% 25%, white 0% 50%) 50% / 12px 12px; }
+.cipher-thumb-skeleton, .cipher-thumb-error { width: 64px; height: 64px; display: grid; place-items: center; background: #e2e8f0; border-radius: 5px; animation: dash-highlight 1.8s ease-out infinite alternate; }
+.cipher-thumb-error { color: #991b1b; }
+.noise-lightbox { padding: 2rem; overflow: auto; }
+.noise-lightbox-content { position: relative; max-width: 95vw; max-height: 92vh; overflow: auto; padding: 1rem; background: white; border-radius: 8px; }
+.noise-lightbox-content > button { position: sticky; float: right; top: 0; }
+.noise-native-scroll { max-width: calc(95vw - 3rem); max-height: calc(82vh - 5rem); overflow: auto; background: #e2e8f0; }
+.noise-native-scroll canvas { display: block; width: auto; height: auto; max-width: none; image-rendering: pixelated; }

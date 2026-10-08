@@ -18,7 +18,7 @@ export function eventLabel(eventType: string, details?: Record<string, unknown> 
     case "SESSION_ENDED": return `Session ended (${String(details?.reason ?? "unknown")})`;
     case "ROOM_FULL": return "Room full (extra user refused)";
     case "METRICS_REJECTED": return "Metrics rejected (invalid data)";
-    case "LAB_DATA_CLEARED": return "Lab data cleared";
+    case "LAB_DATA_CLEARED": return details?.table === "image_metrics" ? "Lab data cleared (image metrics)" : details?.table === "text_metrics" ? "Lab data cleared (text metrics)" : "Lab data cleared";
     default: return eventType.toLowerCase().split("_").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   }
 }

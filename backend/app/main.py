@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
             raw_length = request.headers.get("content-length", "")
             if raw_length.isdigit() and int(raw_length) > 1_200_000:
                 return JSONResponse(status_code=413, content={"detail": "Request body too large"})
-        if request.method == "POST" and request.url.path == "/api/lab/text-metrics":
+        if request.method == "POST" and request.url.path in {"/api/lab/text-metrics", "/api/lab/image-metrics"}:
             raw_length = request.headers.get("content-length", "")
             body = await request.body()
             if (raw_length.isdigit() and int(raw_length) > 4096) or len(body) > 4096:

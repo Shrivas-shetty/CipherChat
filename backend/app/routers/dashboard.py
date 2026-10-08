@@ -1,6 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import base64
+import json
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
@@ -9,7 +11,7 @@ from app.db.models import User
 from app.deps import require_role
 from app.services.audit import log_event, verify_chain_detailed
 from app.services.dashboard_queries import event_types, query_logs, query_messages, query_sessions, query_summary
-from app.services.lab_queries import clear_text_metrics, query_text_records
+from app.services.lab_queries import clear_image_metrics, clear_text_metrics, get_cipher_noise_message, query_image_records, query_text_records
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 analyst = Depends(require_role("analyst"))
@@ -81,6 +83,36 @@ def clear_text_lab(
     deleted = clear_text_metrics(lab_db)
     log_event("LAB_DATA_CLEARED", severity="warning", user_id=user.id,
               details={"table": "text_metrics", "rows_deleted": deleted})
+    return {"deleted": deleted}
+
+
+@router.get("/lab/image/records")
+def image_lab_records(
+    limit: int = Query(200, ge=1), before_id: Optional[int] = None,
+    lab_db: Session = Depends(get_lab_db), app_db: Session = Depends(get_db),
+    _: User = analyst,
+):
+    return query_image_records(lab_db, app_db, limit=limit, before_id=before_id)
+
+
+@router.get("/lab/image/{message_id}/cipher-noise")
+def image_cipher_noise(message_id: int, app_db: Session = Depends(get_db), _: User = analyst):
+    result = get_cipher_noise_message(app_db, message_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Image message not found")
+    width, height, noise = result
+    return Response(
+        content=json.dumps({"message_id": message_id, "w": width, "h": height,
+            "noise_rgb_b64": base64.b64encode(noise).decode("ascii")}),
+        media_type="application/json", headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.delete("/lab/image")
+def clear_image_lab(lab_db: Session = Depends(get_lab_db), user: User = analyst):
+    deleted = clear_image_metrics(lab_db)
+    log_event("LAB_DATA_CLEARED", severity="warning", user_id=user.id,
+              details={"table": "image_metrics", "rows_deleted": deleted})
     return {"deleted": deleted}
 
 

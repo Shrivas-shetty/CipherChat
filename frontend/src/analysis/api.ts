@@ -10,3 +10,8 @@ export type TextMetricPayload = {
 export function postTextMetrics(payload: TextMetricPayload, signal?: AbortSignal): Promise<{ id: number }> {
   return requestJson<{ id: number }>("/api/lab/text-metrics", { method: "POST", body: JSON.stringify(payload), signal });
 }
+
+export type ImageMetricPayload = Omit<import("./imageMetrics").ImageMetricsResult, never> & { message_id: number; session_id: string };
+export function postImageMetrics(payload: ImageMetricPayload, signal?: AbortSignal): Promise<{ id: number }> {
+  return requestJson<{ id: number }>("/api/lab/image-metrics", { method: "POST", body: JSON.stringify(payload), signal });
+}

@@ -50,7 +50,7 @@ def scenario(tmp_path: Path):
             text2_response = client.post("/api/messages", headers=_auth(alice), json={"session_id": sid, "counter": 3, "msg_type": "text", "meta_json": "{}", "iv": text2_env.iv_b64, "ct": text2_env.ct_b64, "hmac": text2_env.hmac_b64})
             assert text2_response.status_code == 201
             ws_b.receive_json()
-            yield {"client": client, "alice": alice, "bob": bob, "analyst": analyst, "sid": sid, "text_id": text_response.json()["id"], "text2_id": text2_response.json()["id"], "image_id": image_response.json()["id"], "text_ct": base64.b64decode(text_env.ct_b64), "key": keys_a.k_enc, "iv": base64.b64decode(text_env.iv_b64), "pt": b"private-lab-plaintext", "app_engine": app_engine, "lab_engine": lab_engine, "path": tmp_path / "lab.db"}
+            yield {"client": client, "alice": alice, "bob": bob, "analyst": analyst, "sid": sid, "text_id": text_response.json()["id"], "text2_id": text2_response.json()["id"], "image_id": image_response.json()["id"], "text_ct": base64.b64decode(text_env.ct_b64), "image_ct": base64.b64decode(image_env.ct_b64), "image_iv": base64.b64decode(image_env.iv_b64), "image_pixels": bytes(range(12)), "keys_a": keys_a, "ws_b": ws_b, "key": keys_a.k_enc, "iv": base64.b64decode(text_env.iv_b64), "pt": b"private-lab-plaintext", "app_engine": app_engine, "lab_engine": lab_engine, "path": tmp_path / "lab.db"}
     Base.metadata.drop_all(bind=app_engine); LabBase.metadata.drop_all(bind=lab_engine)
     app_engine.dispose(); lab_engine.dispose()
     set_engine_and_session(previous_app_engine); set_lab_engine_and_session(previous_lab_engine)
@@ -175,8 +175,7 @@ def test_rate_limit_and_analyst_dashboard_clear(scenario, monkeypatch):
     assert page.status_code == 200
     data = page.json()
     assert data["total"] == 1 and data["items"][0]["sender"] == "alice"
-    assert data["items"][0]["ct_preview_hex"] == scenario["text_ct"][:32].hex()
-    assert len(data["items"][0]["ct_preview_hex"]) <= 64
+    assert "ct_preview_hex" not in data["items"][0]
     payload_json = json.dumps(data)
     for forbidden in ('"ct"', '"iv"', '"hmac"', '"plaintext"'): assert forbidden not in payload_json
     summary = client.get("/api/dashboard/summary", headers=analyst).json()
