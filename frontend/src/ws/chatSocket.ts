@@ -14,7 +14,48 @@ export type OutgoingChat = {
   text: string;
 };
 
-export type OutgoingFrame = OutgoingAuth | OutgoingChat;
+export type OutgoingDhPublic = {
+  v: 1;
+  type: "dh_public";
+  session_id: string;
+  public: string;
+};
+
+export type OutgoingKeyConfirm = {
+  v: 1;
+  type: "key_confirm";
+  session_id: string;
+  tag: string;
+};
+
+export type OutgoingKeyVerified = {
+  v: 1;
+  type: "key_verified";
+  session_id: string;
+  fingerprint: string;
+  timings?: { keygen_ms: number; derive_ms: number };
+};
+
+export type OutgoingKeyFailed = {
+  v: 1;
+  type: "key_failed";
+  session_id: string;
+  reason: "bad_public" | "key_confirm_failed" | string;
+};
+
+export type OutgoingRequestSession = {
+  v: 1;
+  type: "request_session";
+};
+
+export type OutgoingFrame =
+  | OutgoingAuth
+  | OutgoingChat
+  | OutgoingDhPublic
+  | OutgoingKeyConfirm
+  | OutgoingKeyVerified
+  | OutgoingKeyFailed
+  | OutgoingRequestSession;
 
 export type IncomingJoined = {
   v: 1;
@@ -28,6 +69,45 @@ export type IncomingStatus = {
   type: "status";
   state: "waiting" | "paired";
   peer: { username: string } | null;
+};
+
+export type IncomingSessionStart = {
+  v: 1;
+  type: "session_start";
+  session_id: string;
+  role: "initiator" | "responder";
+  peer: { user_id: string; username: string };
+  dh: { group: string; g: number };
+};
+
+export type IncomingDhPublic = {
+  v: 1;
+  type: "dh_public";
+  session_id: string;
+  from_role: "initiator" | "responder";
+  public: string;
+};
+
+export type IncomingKeyConfirm = {
+  v: 1;
+  type: "key_confirm";
+  session_id: string;
+  from_role: "initiator" | "responder";
+  tag: string;
+};
+
+export type IncomingSessionEstablished = {
+  v: 1;
+  type: "session_established";
+  session_id: string;
+  fingerprint: string;
+};
+
+export type IncomingSessionTerminated = {
+  v: 1;
+  type: "session_terminated";
+  session_id: string;
+  reason: string;
 };
 
 export type IncomingChat = {
@@ -54,6 +134,8 @@ export type IncomingError = {
     | "ROOM_FULL"
     | "SUPERSEDED"
     | "BAD_FRAME"
+    | "NO_SESSION"
+    | "BAD_SESSION"
     | string;
   message: string;
 };
@@ -61,6 +143,11 @@ export type IncomingError = {
 export type IncomingFrame =
   | IncomingJoined
   | IncomingStatus
+  | IncomingSessionStart
+  | IncomingDhPublic
+  | IncomingKeyConfirm
+  | IncomingSessionEstablished
+  | IncomingSessionTerminated
   | IncomingChat
   | IncomingPeerLeft
   | IncomingError;
@@ -142,6 +229,13 @@ export class ChatSocket {
       v: PROTOCOL_VERSION,
       type: "chat",
       text,
+    });
+  }
+
+  requestSession(): void {
+    this.send({
+      v: PROTOCOL_VERSION,
+      type: "request_session",
     });
   }
 

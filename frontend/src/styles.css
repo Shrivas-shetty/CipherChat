@@ -196,14 +196,145 @@ body {
   background: #f3e6c8;
 }
 
-.status-banner.paired {
-  background: #d5ebe2;
-  color: var(--accent);
+.status-banner.negotiating {
+  background: #fef3c7;
+  color: #92400e;
 }
 
+.status-banner.established,
+.status-banner.paired {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-banner.failed,
 .status-banner.disconnected {
-  background: #f3d6d6;
-  color: var(--danger);
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-banner.terminated {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.session-info-bar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.session-banner-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.fingerprint-display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.fingerprint-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.fingerprint-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #047857;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+.key-details-toggle {
+  font-size: 0.85rem;
+}
+
+.key-details-toggle summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  user-select: none;
+}
+
+.key-details-toggle summary:hover {
+  color: var(--ink);
+}
+
+.key-details-content {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.detail-item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 90px;
+}
+
+.detail-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.crypto-explainer {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.4rem;
+}
+
+.session-alert {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.session-alert.failed {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.session-alert.terminated {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
 }
 
 .message-list {

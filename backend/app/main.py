@@ -20,6 +20,18 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     init_db()
+    from app.db import base
+    from app.db.models import ChatSession, utc_now
+
+    with base.SessionLocal() as db:
+        pending = db.query(ChatSession).filter(ChatSession.status != "terminated").all()
+        now = utc_now()
+        for s in pending:
+            s.status = "terminated"
+            s.ended_at = now
+            s.end_reason = "server_restart"
+        if pending:
+            db.commit()
     yield
 
 

@@ -71,3 +71,24 @@ class AuditLog(Base):
     prev_hash = Column(String(64), nullable=False)
     row_hash = Column(String(64), nullable=False)
 
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(String(36), primary_key=True)
+    user_a_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_b_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), nullable=False)  # "negotiating" | "established" | "terminated"
+    started_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    established_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    end_reason = Column(String(50), nullable=True)
+    pub_a = Column(String(512), nullable=True)
+    pub_b = Column(String(512), nullable=True)
+    fingerprint_a = Column(String(32), nullable=True)
+    fingerprint_b = Column(String(32), nullable=True)
+
+    user_a = relationship("User", foreign_keys=[user_a_id])
+    user_b = relationship("User", foreign_keys=[user_b_id])
+
+

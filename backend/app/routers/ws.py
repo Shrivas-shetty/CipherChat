@@ -15,6 +15,7 @@ from app.db import base
 from app.deps import authenticate_token
 from app.services.audit import log_event
 from app.ws.manager import manager
+from app.ws.session_coordinator import coordinator
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # Check if the same user is already connected in another tab/device
         existing = manager.get_user_by_id(user_id_str)
         if existing:
+            await coordinator.terminate_session(session_id=None, reason="superseded")
             await _send_error(
                 existing.websocket,
                 "SUPERSEDED",
@@ -133,7 +135,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 return
 
         # Register user in active connections
-        manager.add_user(websocket, user_id=user_id_str, username=user_name)
+        user_conn = manager.add_user(websocket, user_id=user_id_str, username=user_name)
         log_event(
             "WS_CONNECTED",
             severity="info",
@@ -156,6 +158,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 u.websocket,
                 _envelope("status", state=status["state"], peer=status["peer"]),
             )
+
+        # Trigger session coordinator for pairing/session start
+        if user_conn:
+            await coordinator.on_user_joined(user_conn)
 
         # Chat receive loop
         while True:
@@ -180,7 +186,45 @@ async def websocket_endpoint(websocket: WebSocket):
                 await _send_error(websocket, "BAD_FRAME", "Already authenticated")
                 continue
 
+            if msg_type == "dh_public":
+                curr_user = manager.get_user_by_id(user_id_str)
+                if curr_user:
+                    await coordinator.handle_dh_public(curr_user, data)
+                continue
+
+            if msg_type == "key_confirm":
+                curr_user = manager.get_user_by_id(user_id_str)
+                if curr_user:
+                    await coordinator.handle_key_confirm(curr_user, data)
+                continue
+
+            if msg_type == "key_verified":
+                curr_user = manager.get_user_by_id(user_id_str)
+                if curr_user:
+                    await coordinator.handle_key_verified(curr_user, data)
+                continue
+
+            if msg_type == "key_failed":
+                curr_user = manager.get_user_by_id(user_id_str)
+                if curr_user:
+                    await coordinator.handle_key_failed(curr_user, data)
+                continue
+
+            if msg_type == "request_session":
+                curr_user = manager.get_user_by_id(user_id_str)
+                if curr_user:
+                    await coordinator.request_session(curr_user)
+                continue
+
             if msg_type == "chat":
+                if not coordinator.is_established():
+                    await _send_error(
+                        websocket,
+                        "NO_SESSION",
+                        "No secure session established",
+                    )
+                    continue
+
                 raw_text = data.get("text")
                 if not isinstance(raw_text, str):
                     await _send_error(websocket, "BAD_FRAME", "text must be a string")
@@ -194,6 +238,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     continue
 
+                # TEMP plaintext, replaced in Phase 4
                 payload = _envelope(
                     "chat",
                     id=str(uuid4()),
@@ -215,6 +260,8 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         departed = manager.disconnect(websocket)
         if departed and authenticated_user:
+            # First terminate active session if any, notifying peer with session_terminated
+            await coordinator.terminate_session(session_id=None, reason="disconnect")
             log_event(
                 "WS_DISCONNECTED",
                 severity="info",

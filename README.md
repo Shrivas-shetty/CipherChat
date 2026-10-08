@@ -1,10 +1,38 @@
-# CipherChat (Phase 2)
+# CipherChat (Phase 3)
 
-Secure two-user chat over a LAN with user accounts, JWT sessions with server-side revocation, and a tamper-evident audit log with SHA-256 hash chaining.
+Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and a blind server relay architecture.
 
 > [!WARNING]
 > **Known Limitation (Educational LAN Analysis):**
-> Traffic is plain HTTP/WS, so credentials and JWT tokens are visible in plaintext to anyone sniffing the LAN. This is intentional for the project's Wireshark traffic analysis and inspection laboratory exercises. End-to-end encryption and key exchange will be implemented in subsequent phases.
+> Wire traffic is plain HTTP/WS, and chat message relay is still plaintext in Phase 3 (marked `TEMP`). End-to-end message encryption with AES-GCM/CBC and HMAC verification will be added in Phase 4. However, Diffie-Hellman keys, shared secrets, and HKDF session keys are already derived purely in-browser and NEVER touch the server.
+
+---
+
+## Core Principle: Blind Server Relay
+
+The server operates strictly as a **blind relay** for the key exchange:
+- **Relay Only:** Relays `session_start`, `dh_public`, and `key_confirm` frames between participants.
+- **Validation:** Verifies parameter formats and checks that public values fall within the safe prime subgroup range ($2 \le y \le P - 2$).
+- **Zero Knowledge:** The server never computes, inspects, receives, or stores any private exponent ($x$), shared secret ($Z$), or derived key ($K_{enc}, K_{mac}$).
+- **Enforcement:** Enforced in code and guaranteed by automated source grep tests in `backend/app/tests/test_session_lifecycle.py`.
+
+---
+
+## Cryptographic Specification
+
+| Component | Specification |
+| :--- | :--- |
+| **DH Group** | RFC 3526 Group 14 (2048-bit MODP safe prime), generator $g = 2$ |
+| **Private Exponent** | 32 random bytes from CSPRNG (`crypto.getRandomValues` / `secrets.token_bytes`), top bit forced to 1 ($x \ge 2^{255}$) |
+| **Public Wire Format** | 512 lowercase hex characters (fixed 256-byte big-endian encoding, zero-padded) |
+| **Public Key Validation** | $2 \le y \le P - 2$; non-hex or wrong-length inputs rejected with `bad_public` |
+| **Shared Secret** | $Z = \text{peer\_y}^x \pmod P$, encoded as 256-byte big-endian |
+| **HKDF** | RFC 5869 HKDF-SHA256 |
+| **HKDF Salt** | $\text{SHA-256}(\text{"CC1-salt"} \parallel \text{session\_id} \parallel \text{pub\_initiator} \parallel \text{pub\_responder})$ |
+| **Derived Keys** | $K_{enc}$ (32B with `"CipherChat v1 enc"`), $K_{mac}$ (32B with `"CipherChat v1 mac"`), Fingerprint (8B with `"CipherChat v1 fingerprint"`) |
+| **Fingerprint Format** | 4 groups of 4 uppercase hex characters separated by spaces (e.g. `60B3 9698 05E7 205C`) |
+| **Confirmation Tag** | $\text{HMAC-SHA256}(K_{mac}, \text{"CC1-confirm"} \parallel \text{session\_id} \parallel \text{role\_char})$, verified in constant time |
+| **Key Memory Safety** | Ephemeral in-memory store; byte arrays wiped with zeros (`fill(0)`) on session termination/logout/unmount |
 
 ---
 
@@ -16,59 +44,56 @@ CipherChat/
 │   ├── app/
 │   │   ├── config.py         Config, DB_PATH, JWT settings, lockout policy
 │   │   ├── deps.py           Auth dependencies (get_current_user, require_role)
-│   │   ├── main.py           FastAPI application factory, lifespan DB init, SPA serving
+│   │   ├── main.py           FastAPI app, lifespan DB init, server restart cleanup, SPA serving
+│   │   ├── crypto/           Server-side reference crypto & verification
+│   │   │   ├── params.py     RFC 3526 Group 14 prime P, generator G, and protocol constants
+│   │   │   ├── dh.py         Public key validation & DH reference operations
+│   │   │   └── kdf.py        HKDF-SHA256 key derivation & confirmation tag reference
 │   │   ├── db/
 │   │   │   ├── base.py       SQLAlchemy engine, WAL PRAGMA, SessionLocal, init_db
-│   │   │   └── models.py     User, AuthSession, AuditLog models
+│   │   │   └── models.py     User, AuthSession, AuditLog, ChatSession models
 │   │   ├── routers/
 │   │   │   ├── auth.py       /api/auth (register, login, logout, me)
 │   │   │   ├── health.py     /api/health
-│   │   │   └── ws.py         /ws (authenticated WebSocket endpoint)
-│   │   ├── scripts/          CLI utilities (seed_analyst, show_audit, verify_audit)
-│   │   ├── security/         Password hashing (bcrypt) and JWT tokens (HS256)
+│   │   │   └── ws.py         /ws (authenticated WebSocket endpoint with handshake relay)
+│   │   ├── scripts/          CLI utilities (seed_analyst, show_audit, verify_audit, make_test_vectors)
 │   │   ├── services/         Audit logging with SHA-256 tamper-evident hash chaining
-│   │   ├── tests/            Pytest auth & audit test suite
+│   │   ├── tests/            Pytest auth, crypto, and session lifecycle test suites
 │   │   └── ws/
-│   │       └── manager.py    Active ConnectionManager
+│   │       ├── manager.py    Active ConnectionManager
+│   │       └── session_coordinator.py Handshake state machine & 15s timeout watcher
 │   └── data/                 SQLite database (app.db) and generated jwt_secret
-└── frontend/                 Vite + React 19 + TypeScript SPA
-    └── src/
-        ├── api/              HTTP client (http.ts) with Bearer token & 401 handler
-        ├── auth/             AuthContext & sessionStorage manager
-        ├── components/       ServerAddressInput
-        ├── pages/            AuthPage, ChatPage, AnalystPage
-        └── ws/               ChatSocket (authenticated v1 WebSocket protocol)
+├── frontend/                 Vite + React 19 + TypeScript SPA
+│   └── src/
+│       ├── api/              HTTP client (http.ts) with Bearer token & 401 handler
+│       ├── auth/             AuthContext & sessionStorage manager
+│       ├── components/       ServerAddressInput
+│       ├── crypto/           In-browser cryptographic implementation
+│       │   ├── params.ts     RFC 3526 Group 14 constants & byte lengths
+│       │   ├── encoding.ts   Strict hex/byte/bigint conversions
+│       │   ├── modpow.ts     Square-and-multiply BigInt modular exponentiation
+│       │   ├── dh.ts         Browser DH key generation & shared secret computation
+│       │   ├── kdf.ts        HKDF derivation, fingerprinting, confirmation tags
+│       │   ├── sessionKeys.ts Ephemeral in-memory key storage with zeroing
+│       │   ├── handshake.ts  HandshakeRunner client-side state machine
+│       │   └── __tests__/    Vitest test suite verifying against shared vectors
+│       ├── pages/            AuthPage, ChatPage, AnalystPage
+│       └── ws/               ChatSocket (v1 protocol with DH frame types)
+└── shared/
+    └── test_vectors/
+        └── dh_hkdf.json      Deterministic cross-language DH & HKDF test vectors
 ```
 
 ---
 
-## Dependencies
+## Running the Application
 
-### Backend
-- Python 3.11+
-- `fastapi`
-- `uvicorn[standard]`
-- `sqlalchemy>=2.0`
-- `bcrypt`
-- `pyjwt`
-- `pydantic-settings`
-- Dev/Testing: `pytest`, `httpx`
-
-### Frontend
-- Node.js 18+
-- React 19, TypeScript, Vite
-
----
-
-## Setup & Running
-
-### Backend setup
+### 1. Backend Setup
 
 From `backend/`:
 
 **Windows (PowerShell):**
 ```powershell
-cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -77,96 +102,53 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 **macOS / Linux:**
 ```bash
-cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Health check: `http://127.0.0.1:8000/api/health`
-
-### Frontend setup
+### 2. Frontend Setup
 
 From `frontend/`:
 
 ```powershell
-cd frontend
 npm install
 npm run dev
 ```
 
-The Vite development server is accessible on your LAN.
-
-To generate a production build served directly by FastAPI:
+To build production assets served directly by FastAPI:
 ```powershell
-cd frontend
 npm run build
 ```
-Once built, open `http://<host-LAN-IP>:8000` in your browser.
-
----
-
-## CLI Utilities
-
-Run all commands from the `backend/` directory with your virtual environment activated:
-
-### 1. Seed an Analyst User
-Create a user with the `analyst` role (analysts cannot join chat rooms and are redirected to the Analyst Portal):
-```powershell
-python -m app.scripts.seed_analyst --username analyst1 --password AnalystPass123
-```
-If `--password` is omitted, you will be prompted securely using masked password input.
-
-### 2. View Audit Logs
-View audit events in a formatted table:
-```powershell
-python -m app.scripts.show_audit --tail 50
-```
-Filter by event type (e.g. `LOGIN_FAILED`, `REGISTER`, `ROOM_FULL`):
-```powershell
-python -m app.scripts.show_audit --type LOGIN_FAILED
-```
-
-### 3. Verify Audit Log Hash Chain Integrity
-Verify that no audit logs have been tampered with or modified:
-```powershell
-python -m app.scripts.verify_audit
-```
-Outputs `OK` (exit code 0) if intact, or `Corrupted at row id: <id>` (exit code 1) if tampering is detected.
-
----
-
-## Resetting the Database
-
-To reset all users, sessions, and audit logs to a clean state:
-1. Stop the backend server.
-2. Delete the SQLite database file:
-   ```powershell
-   Remove-Item backend/data/app.db
-   ```
-   (On Linux/macOS: `rm backend/data/app.db`)
-3. Restart the backend server. Tables will automatically be recreated on startup.
 
 ---
 
 ## Running Automated Tests
 
-Run backend test suite using `pytest`:
+### Backend Tests (pytest)
+Runs auth, crypto DH/KDF, and session lifecycle tests (including blind-relay source grep and 15s timeout watcher):
 ```powershell
-pytest -v backend/app/tests/test_auth.py
+python -m pytest backend/app/tests -v
+```
+
+### Frontend Tests (vitest)
+Runs in-browser cryptographic unit tests verifying compliance with `shared/test_vectors/dh_hkdf.json`:
+```powershell
+cd frontend
+npm test
 ```
 
 ---
 
-## Acceptance Tests
+## Acceptance Tests (Phase 3)
 
-1. **User Registration:** Register user `alice` and `bob`. Weak passwords (< 8 bytes, no letters, or no digits) and duplicate usernames are rejected with clear messages.
-2. **Authentication & Lockout:** Entering a wrong password shows the generic `"Invalid username or password"` error. After 5 consecutive failed attempts within 5 minutes, further attempts return HTTP 429 (`"Too many failed attempts"`). `show_audit` lists `LOGIN_FAILED` (alert) rows and `LOGIN_LOCKED`.
-3. **Paired Chat:** Alice (tab 1) and Bob (tab 2, or another laptop) log in, automatically pair, and chat. Displayed names match their registered usernames.
-4. **Room Full Enforcement:** A third registered user logging in and attempting to open chat receives `"Chat room is full, only 2 users allowed"`. A `ROOM_FULL` event is recorded in the audit log.
-5. **Session Revocation (Logout):** When Alice clicks Logout, Bob immediately sees `"Peer left"` and `"Waiting for User B…"`. Alice's token is revoked in `auth_sessions`; calling `/api/auth/me` with the revoked token returns HTTP 401.
-6. **Session Persistence & Superseding:** Refreshing Alice's tab keeps her logged in via `sessionStorage` and reconnects to the chat. Opening Alice's account in a second tab supersedes the first tab's WebSocket connection with `"You were signed in from another tab or device"`.
-7. **Analyst Portal:** Seeding an analyst user via `seed_analyst` and logging in renders the placeholder `AnalystPage` (`"Security dashboard, coming in Phase 6"`). Analysts cannot join the live chat room.
-8. **Tamper Detection:** Running `verify_audit` reports `OK`. Manually modifying any field of a row in `app.db` causes `verify_audit` to report the corrupted row ID.
-9. **Automated Test Suite:** `pytest` passes cleanly.
+1. **In-Browser Key Generation & Relay:** Two users log in and connect. Both browser consoles demonstrate BigInt modular exponentiation and send `dh_public`. The server relays the 512-hex public keys blindly.
+2. **Key Confirmation & Fingerprint Matching:** Both browsers verify each other's confirmation tags. Once both send `key_verified`, both receive `session_established` with identical fingerprints (e.g. `60B3 9698 05E7 205C`).
+3. **Session Info & Demo Panel:** Clicking "Key details (demo only)" reveals the session ID, role, keygen latency, and key derivation latency.
+4. **Chat Session Gating:** Chat messages cannot be sent while in `waiting` or `negotiating` states; attempting to send returns `NO_SESSION`. Chat is enabled once established.
+5. **Rejection of Malformed/Out-of-Range Public Keys:** Sending $y < 2$ or $y > P-2$ causes the server to abort the handshake, log `KEY_EXCHANGE_FAILED`, and terminate the session with `bad_public`.
+6. **Handshake Timeout:** If either client fails to complete the handshake within 15 seconds, the server terminates with `handshake_timeout`.
+7. **Clean Session Termination & Ordering:** When one user disconnects or logs out, the peer receives `session_terminated`, then `peer_left`, and then `status: waiting`.
+8. **Memory Hygiene:** Derived session keys are wiped with zeros (`clearSessionKeys()`) on logout, session termination, or unmount.
+9. **Cross-Language Test Vector Consistency:** Both Python pytest and TypeScript Vitest pass all test vector assertions against `shared/test_vectors/dh_hkdf.json`.

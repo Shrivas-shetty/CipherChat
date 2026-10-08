@@ -268,6 +268,10 @@ async def logout(
         session_id=session.jti,
     )
 
+    # Terminate active chat session before closing ws
+    from app.ws.session_coordinator import coordinator
+    await coordinator.terminate_session(session_id=None, reason="logout")
+
     # Close user's active WebSocket connection if any
     await manager.close_user(str(user.id), reason="User logged out")
 
