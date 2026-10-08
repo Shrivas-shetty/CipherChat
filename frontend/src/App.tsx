@@ -48,6 +48,7 @@ function MainApp() {
     null
   );
 
+  
   const socketRef = useRef<ChatSocket | null>(null);
   const handshakeRef = useRef<HandshakeRunner | null>(null);
   const intentionalCloseRef = useRef(false);
