@@ -68,7 +68,7 @@ class AuditLog(Base):
     username_attempted = Column(String(50), nullable=True)
     success = Column(Boolean, nullable=False, default=True)
     ip = Column(String(50), nullable=True)
-    session_id = Column(String(36), nullable=True)
+    session_id = Column(String(36), nullable=True, index=True)
     details = Column(JSON, nullable=True)
     prev_hash = Column(String(64), nullable=False)
     row_hash = Column(String(64), nullable=False)
@@ -105,7 +105,7 @@ class Message(Base):
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     recipient_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     sender_role = Column(String(1), nullable=False)  # "I" | "R"
-    msg_type = Column(String(20), nullable=False, default="text")
+    msg_type = Column(String(20), nullable=False, default="text", index=True)
     counter = Column(Integer, nullable=False)
     meta_json = Column(String(255), nullable=False, default="{}")
     iv = Column(LargeBinary(16), nullable=False)
@@ -114,7 +114,7 @@ class Message(Base):
     size_bytes = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
-    verification_status = Column(String(20), default="pending", nullable=False)  # "pending" | "verified" | "failed"
+    verification_status = Column(String(20), default="pending", nullable=False, index=True)  # "pending" | "verified" | "failed"
     verification_reason = Column(String(50), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
 

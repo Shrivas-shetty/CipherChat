@@ -220,3 +220,50 @@ To demonstrate the Encrypt-then-MAC integrity guarantee:
    - Alice's bubble updates to `✗ Integrity failed at peer (hmac_mismatch)`.
    - A `TAMPER_DETECTED` alert is permanently committed to the server's SHA-256 audit hash-chain.
    - Inspecting the **Wire view (demo only)** collapsible drawer on both sides reveals the raw counter, IV, truncated ciphertext, HMAC, and verification status.
+
+## Security Dashboard (Phase 6)
+
+The analyst dashboard is a REST-polled, read-only view of metadata already stored in `app.db`. It provides a summary strip, audit Events, message metadata, session history, audit-chain verification, and the Phase 4 tamper controls. Crypto Lab and Network Analysis are placeholders for later phases.
+
+Seed an analyst account from the backend directory, then sign in through the normal page:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m app.scripts.seed_analyst --username analyst1
+```
+
+Use a separate browser tab or profile for each account. Authentication uses `sessionStorage`, which is isolated per tab. The seed script prompts for the analyst password and confirms the created username.
+
+| Endpoint | Dashboard data |
+| --- | --- |
+| `GET /api/dashboard/summary` | Online usernames, active session, message/session totals, selected security counts, audit row count |
+| `GET /api/dashboard/logs` | Filterable, newest-first audit events with paging |
+| `GET /api/dashboard/logs/types` | Event categories and severity values |
+| `GET /api/dashboard/messages` | Message metadata, sizes, image dimensions, and verification status |
+| `GET /api/dashboard/sessions` | Session lifecycle, duration, handshake time, matching fingerprint, message counts |
+| `GET /api/dashboard/audit-integrity` | Full audit hash-chain verification result |
+
+Every dashboard endpoint requires the analyst role. Reads do not append audit rows. The dashboard follows the blind-relay rule: it shows metadata needed for monitoring, but never password hashes, JWTs or token `jti` values, DH public values, ciphertext, IVs, HMAC blobs, keys, plaintext, or decrypted images. Image dimensions, message sizes, timestamps, participants, status and the agreed fingerprint are visible metadata; message contents and keys remain in the users' browsers.
+
+Audit event categories are defined by the backend and served through `/api/dashboard/logs/types`: **auth**, **session**, **message**, and **demo**. Events outside those sets are categorized as **other**. Severity filters support info, warning, and alert.
+
+### Phase 6 acceptance checks
+
+Automated checks:
+
+```powershell
+.venv\Scripts\python.exe -m pytest backend/app/tests -v
+cd frontend
+npm test
+```
+
+Manual walkthrough:
+
+1. Sign in as analyst in one tab and as Alice and Bob in two others. Confirm online users, established-session fingerprint, and message counts update within about five seconds.
+2. Make a bad Alice login and confirm the Unauthorized access attempt alert appears within about three seconds. After five failed attempts, confirm the account-lock event. Security alerts only filters warning and alert events.
+3. Send text and images and check type, participants, size, image dimensions, and verification status in Messages. Arm tamper in Demo Controls and send another message; its failed integrity state and tamper alert should appear.
+4. Check session handshake time, duration, and end reason. Logging Alice out should create Session ended (logout). Selecting a session opens its filtered Events.
+5. Exercise the Events filters and Load older paging. Pause Live, then resume and confirm new events arrive without duplicates.
+6. Verify the audit chain, then edit an audit row in a disposable local database and verify that the dashboard reports the damaged row.
+7. Confirm dashboard requests return 401 without a token and 403 with a normal user token, and inspect responses to confirm they contain metadata only.
+8. Confirm the Crypto Lab and Network tabs show their later-phase placeholders and Demo Controls still arms and disarms tamper.

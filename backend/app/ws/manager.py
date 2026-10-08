@@ -32,6 +32,9 @@ class ConnectionManager:
     def joined_users(self) -> list[UserConnection]:
         return list(self._users.values())
 
+    def connected_usernames(self) -> list[str]:
+        return sorted(user.username for user in self._users.values())
+
     def is_joined(self, websocket: WebSocket) -> bool:
         return id(websocket) in self._ws_to_user
 

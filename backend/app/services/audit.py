@@ -96,41 +96,48 @@ def log_event(
             return entry
 
 
+def verify_chain_detailed(db: Optional[Session] = None) -> dict[str, Any]:
+    """Verify the chain and report the first invalid row and amount examined."""
+    close_after = False
+    if db is None:
+        db = base.SessionLocal()
+        close_after = True
+    checked_at = to_iso_z(utc_now())
+    rows_checked = 0
+    first_bad_id = None
+    try:
+        rows = db.query(AuditLog).order_by(AuditLog.id.asc()).all()
+        expected_prev_hash = GENESIS_PREV_HASH
+        for row in rows:
+            rows_checked += 1
+            if row.prev_hash != expected_prev_hash:
+                first_bad_id = row.id
+                break
+            canonical = canonical_json_for_row(
+                ts_str=to_iso_z(row.ts), event_type=row.event_type,
+                severity=row.severity, user_id=row.user_id,
+                username_attempted=row.username_attempted, success=row.success,
+                ip=row.ip, session_id=row.session_id, details=row.details,
+            )
+            if row.row_hash != compute_row_hash(row.prev_hash, canonical):
+                first_bad_id = row.id
+                break
+            expected_prev_hash = row.row_hash
+        return {
+            "ok": first_bad_id is None,
+            "first_bad_id": first_bad_id,
+            "rows_checked": rows_checked,
+            "checked_at": checked_at,
+        }
+    finally:
+        if close_after:
+            db.close()
+
+
 def verify_chain(db: Optional[Session] = None) -> tuple[bool, Optional[int]]:
     """
     Recomputes the entire audit log hash chain.
     Returns (True, None) if intact, or (False, first_bad_id) if corrupted.
     """
-    close_after = False
-    if db is None:
-        db = base.SessionLocal()
-        close_after = True
-
-    try:
-        rows = db.query(AuditLog).order_by(AuditLog.id.asc()).all()
-        expected_prev_hash = GENESIS_PREV_HASH
-        for row in rows:
-            if row.prev_hash != expected_prev_hash:
-                return False, row.id
-
-            canonical = canonical_json_for_row(
-                ts_str=to_iso_z(row.ts),
-                event_type=row.event_type,
-                severity=row.severity,
-                user_id=row.user_id,
-                username_attempted=row.username_attempted,
-                success=row.success,
-                ip=row.ip,
-                session_id=row.session_id,
-                details=row.details,
-            )
-            expected_row_hash = compute_row_hash(row.prev_hash, canonical)
-            if row.row_hash != expected_row_hash:
-                return False, row.id
-
-            expected_prev_hash = row.row_hash
-
-        return True, None
-    finally:
-        if close_after:
-            db.close()
+    result = verify_chain_detailed(db)
+    return result["ok"], result["first_bad_id"]
