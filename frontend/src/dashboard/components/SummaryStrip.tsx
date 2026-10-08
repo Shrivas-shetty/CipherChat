@@ -19,6 +19,7 @@ export function SummaryStrip() {
       <div><small>Failed logins (24h)</small><b>{data.security.failed_logins_24h}</b></div>
       <div><small>Tamper detections</small><b>{data.security.tamper_detected_total}</b></div>
       <div><small>Sessions</small><b>{data.sessions.total}</b></div>
+      <div><small>Text metrics</small><b>{data.lab.text_records}</b></div>
     </div>}
   </section>;
 }

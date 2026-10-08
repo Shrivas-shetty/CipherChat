@@ -49,6 +49,14 @@ export class MessageService {
   private isProcessingQueue: boolean = false;
   private listeners: Set<MessagesListener> = new Set();
   private generation = 0;
+  private textMetricsEnqueuer: ((input: { messageId: number; sessionId: string; pt: Uint8Array; iv: Uint8Array; ct: Uint8Array }) => string | null) | null = null;
+
+  public setTextMetricsEnqueuer(enqueuer: typeof this.textMetricsEnqueuer): void { this.textMetricsEnqueuer = enqueuer; }
+
+  public handleTextMetricsStatus(messageId: number, status: string | null): void {
+    const message = this.messages.find((item) => item.mine && item.id === String(messageId));
+    if (message) { message.metricsStatus = status ?? undefined; this.notify(); }
+  }
 
   public subscribe(listener: MessagesListener): () => void {
     this.listeners.add(listener);
@@ -123,6 +131,7 @@ export class MessageService {
     currentUsername: string,
     senderRole: "I" | "R"
   ): Promise<ChatMessage> {
+    const generation = this.generation;
     const keys = getSessionKeys();
     if (!keys) {
       throw new Error("No established secure session");
@@ -150,6 +159,7 @@ export class MessageService {
         body: JSON.stringify(wireBody),
       }
     );
+    if (generation !== this.generation) throw new Error("Session ended");
 
     const wire: WireDetails = {
       counter,
@@ -172,6 +182,13 @@ export class MessageService {
       ts: res.created_at,
       wire,
     };
+
+    if (this.textMetricsEnqueuer) {
+      const pt = new TextEncoder().encode(text);
+      const ivCopy = new Uint8Array(env.iv), ctCopy = new Uint8Array(env.ct);
+      try { myMsg.metricsStatus = this.textMetricsEnqueuer({ messageId: res.id, sessionId: env.session_id, pt, iv: ivCopy, ct: ctCopy }) ?? undefined; }
+      finally { pt.fill(0); ivCopy.fill(0); ctCopy.fill(0); }
+    }
 
     this.messages.push(myMsg);
     this.notify();

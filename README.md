@@ -245,7 +245,7 @@ Use a separate browser tab or profile for each account. Authentication uses `ses
 
 Every dashboard endpoint requires the analyst role. Reads do not append audit rows. The dashboard follows the blind-relay rule: it shows metadata needed for monitoring, but never password hashes, JWTs or token `jti` values, DH public values, ciphertext, IVs, HMAC blobs, keys, plaintext, or decrypted images. Image dimensions, message sizes, timestamps, participants, status and the agreed fingerprint are visible metadata; message contents and keys remain in the users' browsers.
 
-Audit event categories are defined by the backend and served through `/api/dashboard/logs/types`: **auth**, **session**, **message**, and **demo**. Events outside those sets are categorized as **other**. Severity filters support info, warning, and alert.
+Audit event categories are defined by the backend and served through `/api/dashboard/logs/types`: **auth**, **session**, **message**, **demo**, and **lab**. Events outside those sets are categorized as **other**. Severity filters support info, warning, and alert.
 
 ### Phase 6 acceptance checks
 
@@ -267,3 +267,44 @@ Manual walkthrough:
 6. Verify the audit chain, then edit an audit row in a disposable local database and verify that the dashboard reports the damaged row.
 7. Confirm dashboard requests return 401 without a token and 403 with a normal user token, and inspect responses to confirm they contain metadata only.
 8. Confirm the Crypto Lab and Network tabs show their later-phase placeholders and Demo Controls still arms and disarms tamper.
+
+## Security Metrics (Text) — Phase 7
+
+Text-security experiments run only in the sending browser after the encrypted message is accepted. The sender reuses the message IV for its local trials, but plaintext, keys, IVs, trial ciphertexts, and decrypted content never enter the metrics request. The `/api/lab/text-metrics` body contains a message/session identifier and numeric lengths, trial observations, percentages, and timings. The server validates ranges and ownership, then stores those client-reported numbers in the separate `backend/data/lab.db`; it does not calculate metrics or aggregates. Analysts' averages and regression fits are computed in the dashboard browser.
+
+| Measurement | Browser experiment | Reported result |
+| --- | --- | --- |
+| Confusion | Flip one random bit in a copy of the AES key for each of 8 trials | Changed ciphertext bits as a percentage; expected near 50% |
+| Diffusion / avalanche | Flip one random plaintext bit for each of 8 trials; compare the whole ciphertext and the corresponding 16-byte block | Mean changed bits, whole-message percentage, and block percentage |
+| AES timing | Warm up, calibrate a batch to at least 5 ms, then take 5 batches; decryption is checked against the original bytes | Median encryption/decryption microseconds per operation and encryption batch size |
+
+The baseline first re-encrypts the original bytes and aborts if they do not reproduce the message ciphertext. CBC propagation means a changed plaintext block affects that block and later ciphertext blocks, while earlier blocks remain unchanged. Therefore block avalanche is expected around 50%; whole-message avalanche is around 50% for one-block messages and trends lower (roughly 25–35% for long messages) as random bit flips affect a smaller suffix on average. These are expectations, not server-verified guarantees.
+
+The chat composer has **Collect security metrics (sends numeric results only, never message content)** enabled by default and persisted per browser. Turn it off for clean Wireshark captures. The serial background job yields between trials, caps its queue, retries a transient server/network error once, and is aborted when the session keys are cleared. Only the sender posts metrics; receivers do not.
+
+Metrics are client-reported and cannot be verified by the server. The dashboard can show only the reported statistics and a preview of the first 32 ciphertext bytes. Limitations include browser timer resolution and scheduling noise; the derived exact plaintext byte length leaks a small amount of information; and client-reported observations may be inaccurate or fabricated.
+
+### Phase 7 test commands and acceptance checks
+
+```powershell
+.venv\Scripts\python.exe -m pytest backend/app/tests backend/tests -v
+cd frontend
+npm test
+npm run build
+```
+
+The Python oracle generator is test-only and regenerates the committed cross-language vector file:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe -m tests.tools.make_text_metric_vectors
+```
+
+Acceptance walkthrough:
+
+1. With Alice and Bob in a secure chat and Alice's collection switch enabled, send 15–20 text messages from one character to about 2000 characters, including Unicode and emoji. Confirm Bob's verification and display behavior is unchanged, Alice's wire view shows each metric job reaching `recorded`, and Text Lab records increase.
+2. Check confusion values cluster near 50% with a nearly flat fit. Check block avalanche is near 50%, while whole-message avalanche is near 50% for short messages and tends lower for longer messages. Confirm encryption and decryption charts plot individual timings.
+3. Turn collection off and send a message: chat works and no metric status or lab row is added. Turn it back on to resume collection. Inspect a metrics request and verify it contains numeric values and the session ID only; search the separate lab database for a distinctive plaintext and confirm it is absent.
+4. Confirm Bob cannot submit metrics for Alice's message, duplicate submissions return 409, and extra or malformed fields are rejected. Check `METRICS_REJECTED` audit entries and verify the audit chain.
+5. Log Alice out during analysis and confirm queued jobs stop without posting stale-key results. Clear Text Lab data and confirm the charts and rows empty, the `LAB_DATA_CLEARED` event is recorded, and subsequent sends add new rows.
+6. Re-run all earlier phase acceptance checks for handshake, encrypted text and image chat, tamper simulation, and dashboard logs.

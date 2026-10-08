@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "../chat/types";
 import { messageService } from "../chat/messageService";
+import { clearSessionKeys } from "../crypto/sessionKeys";
+import { getCollectMetrics, setCollectMetrics } from "../analysis/settings";
 import type { HandshakeStatus, HandshakeTimings } from "../crypto/handshake";
 import { decodeImage, type DecodedImage } from "../image/decode";
 import { releaseObjectUrl, renderRgbPng } from "../image/render";
@@ -61,6 +63,7 @@ export function ChatPage({
   const [imageError, setImageError] = useState<string | null>(null);
   const [showNoise, setShowNoise] = useState<Record<string, boolean>>({});
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [collectMetrics, setCollectMetricsState] = useState(getCollectMetrics);
   const imageInput = useRef<HTMLInputElement>(null);
   const preparedRef = useRef<DecodedImage | null>(null);
 
@@ -68,6 +71,7 @@ export function ChatPage({
     preparedRef.current?.rgb.fill(0);
     preparedRef.current = null;
     messageService.reset();
+    clearSessionKeys();
   }, []);
 
   useEffect(() => {
@@ -415,6 +419,7 @@ export function ChatPage({
                                     : "Pending"}
                                 </span>
                               </div>
+                              {isMine && m.metricsStatus && <div className="wire-row"><span className="wire-key">Metrics:</span><span className="wire-val">{m.metricsStatus}</span></div>}
                             </div>
                           </div>
                         </details>
@@ -441,6 +446,7 @@ export function ChatPage({
           )}
 
           {imageError && <p className="msg err">{imageError}</p>}
+          <label className="metrics-setting"><input type="checkbox" checked={collectMetrics} onChange={(event) => { const enabled = event.target.checked; setCollectMetricsState(enabled); setCollectMetrics(enabled); }} /> Collect security metrics (sends numeric results only, never message content)<small>Turn this off for clean Wireshark captures.</small></label>
           {selectedImage && <div className="image-preview-strip">{previewUrl && <img width="96" height="72" src={previewUrl} alt="Processed image preview" />}<span>{preparedImage ? `${preparedImage.w} × ${preparedImage.h} · ${preparedImage.rgb.length} bytes` : selectedImage.name}</span><button type="button" onClick={clearImagePreview}>Cancel</button><button type="button" disabled={!isChatAllowed || isSending || !preparedImage} onClick={async () => { setIsSending(true); await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); try { await onSendImage(selectedImage, preparedImage ?? undefined); clearImagePreview(); } catch (err) { setSendError(err instanceof Error ? err.message : "Image send failed"); } finally { setIsSending(false); } }}>{isSending ? "Encrypting…" : "Send"}</button></div>}
           <form className="composer" onSubmit={handleSend}>
             <input

@@ -8,7 +8,8 @@ export function usePolling<T>(fetcher: (signal: AbortSignal) => Promise<T>, inte
   const busy = useRef(false);
 
   const refresh = useCallback(async () => {
-    if (document.visibilityState !== "visible" || busy.current) return;
+    if (document.visibilityState !== "visible") return;
+    if (busy.current) { controller.current?.abort(); busy.current = false; }
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;

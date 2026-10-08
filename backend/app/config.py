@@ -15,6 +15,8 @@ PROTOCOL_VERSION = 1
 
 # Database and Authentication settings
 DB_PATH = os.getenv("DB_PATH", "data/app.db")
+LAB_DB_PATH = os.getenv("LAB_DB_PATH", "data/lab.db")
+LAB_POSTS_PER_MINUTE = int(os.getenv("LAB_POSTS_PER_MINUTE", 30))
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 8))
 LOGIN_MAX_FAILS = int(os.getenv("LOGIN_MAX_FAILS", 5))
 LOGIN_FAIL_WINDOW_MIN = int(os.getenv("LOGIN_FAIL_WINDOW_MIN", 5))
@@ -50,6 +52,14 @@ JWT_SECRET = get_jwt_secret()
 
 def get_db_file_path() -> Path:
     p = Path(DB_PATH)
+    if not p.is_absolute():
+        p = BASE_DIR / p
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_lab_db_file_path() -> Path:
+    p = Path(LAB_DB_PATH)
     if not p.is_absolute():
         p = BASE_DIR / p
     p.parent.mkdir(parents=True, exist_ok=True)

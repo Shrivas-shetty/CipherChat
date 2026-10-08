@@ -6,6 +6,12 @@ export interface ActiveSessionKeys {
 }
 
 let activeKeys: ActiveSessionKeys | null = null;
+const clearListeners = new Set<(sessionId: string) => void>();
+
+export function subscribeSessionKeysCleared(listener: (sessionId: string) => void): () => void {
+  clearListeners.add(listener);
+  return () => clearListeners.delete(listener);
+}
 
 /**
  * Stores the active derived session keys in module memory.
@@ -41,9 +47,11 @@ export function hasSessionKeys(): boolean {
  */
 export function clearSessionKeys(): void {
   if (activeKeys) {
+    const sessionId = activeKeys.sessionId;
     activeKeys.kEnc.fill(0);
     activeKeys.kMac.fill(0);
     activeKeys = null;
+    for (const listener of clearListeners) listener(sessionId);
   }
 }
 

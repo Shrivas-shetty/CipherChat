@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { messageService } from "./chat/messageService";
+import { enqueueTextMetrics, subscribeMetricStatus } from "./analysis/metricsJob";
 import type { ChatMessage } from "./chat/types";
 import {
   loadServerAddress,
@@ -59,6 +60,12 @@ function MainApp() {
       setMessages(msgs);
     });
     return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    messageService.setTextMetricsEnqueuer(enqueueTextMetrics);
+    const unsubscribe = subscribeMetricStatus((messageId, status) => messageService.handleTextMetricsStatus(messageId, status));
+    return () => { unsubscribe(); messageService.setTextMetricsEnqueuer(null); };
   }, []);
 
   function handleServerAddressChange(addr: ServerAddress) {

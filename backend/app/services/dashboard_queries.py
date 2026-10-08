@@ -6,6 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models import AuditLog, ChatSession, Message, User, to_iso_z, utc_now
+from app.db.lab_models import TextMetric
 from app.image import ImageFormatError, parse_image_meta
 from app.ws.manager import manager
 
@@ -14,6 +15,7 @@ EVENT_CATEGORIES: dict[str, list[str]] = {
     "session": ["WS_CONNECTED", "WS_DISCONNECTED", "WS_SUPERSEDED", "ROOM_FULL", "SESSION_WAITING", "SESSION_STARTED", "KEY_EXCHANGE_OK", "KEY_EXCHANGE_FAILED", "SESSION_ENDED"],
     "message": ["MESSAGE_SENT", "MESSAGE_REJECTED", "MESSAGE_VERIFIED", "TAMPER_DETECTED"],
     "demo": ["TAMPER_ARMED", "TAMPER_DISARMED", "TAMPER_APPLIED"],
+    "lab": ["METRICS_REJECTED", "LAB_DATA_CLEARED"],
 }
 SEVERITIES = ["info", "warning", "alert"]
 _ALL_CATEGORIZED = {event for events in EVENT_CATEGORIES.values() for event in events}
@@ -183,7 +185,7 @@ def query_sessions(db: Session, *, limit: int = 50) -> list[dict[str, Any]]:
     return items
 
 
-def query_summary(db: Session) -> dict[str, Any]:
+def query_summary(db: Session, lab_db: Optional[Session] = None) -> dict[str, Any]:
     now = utc_now()
     total_users = db.query(func.count(User.id)).scalar() or 0
     analysts = db.query(func.count(User.id)).filter(User.role == "analyst").scalar() or 0
@@ -213,4 +215,5 @@ def query_summary(db: Session) -> dict[str, Any]:
         "messages": {"total": message_total, "text": type_counts.get("text", 0), "image": type_counts.get("image", 0), "verified": status_counts.get("verified", 0), "failed": status_counts.get("failed", 0), "pending": status_counts.get("pending", 0)},
         "security": {"failed_logins_total": event_counts.get("LOGIN_FAILED", 0), "failed_logins_24h": failed_24h, "lockouts_total": event_counts.get("LOGIN_LOCKED", 0), "tamper_detected_total": event_counts.get("TAMPER_DETECTED", 0), "token_rejections_total": event_counts.get("TOKEN_REJECTED", 0), "room_full_total": event_counts.get("ROOM_FULL", 0)},
         "audit": {"rows": db.query(func.count(AuditLog.id)).scalar() or 0, "last_id": db.query(func.max(AuditLog.id)).scalar()},
+        "lab": {"text_records": (lab_db.query(func.count(TextMetric.id)).scalar() or 0) if lab_db is not None else 0},
     }

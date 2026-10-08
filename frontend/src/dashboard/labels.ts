@@ -1,4 +1,4 @@
-export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "demo"] as const;
+export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "demo", "lab"] as const;
 
 export function eventLabel(eventType: string, details?: Record<string, unknown> | null): string {
   switch (eventType) {
@@ -17,6 +17,8 @@ export function eventLabel(eventType: string, details?: Record<string, unknown> 
     case "KEY_EXCHANGE_FAILED": return "Key exchange FAILED";
     case "SESSION_ENDED": return `Session ended (${String(details?.reason ?? "unknown")})`;
     case "ROOM_FULL": return "Room full (extra user refused)";
+    case "METRICS_REJECTED": return "Metrics rejected (invalid data)";
+    case "LAB_DATA_CLEARED": return "Lab data cleared";
     default: return eventType.toLowerCase().split("_").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   }
 }

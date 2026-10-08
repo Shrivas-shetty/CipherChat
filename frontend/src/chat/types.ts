@@ -30,5 +30,6 @@ export interface ChatMessage {
   ts: string;
   wire?: WireDetails;
   image?: { w: number; h: number; plaintextBytes: number; overheadBytes: number; pixelHash: string; url?: string; noiseUrl?: string; rgb?: Uint8Array; decodeMs?: number; cryptoMs?: number; placeholder?: boolean };
+  metricsStatus?: string;
 }
 

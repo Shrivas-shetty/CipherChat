@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
+from app.db.lab_base import get_lab_db
 from app.db.models import User
 from app.deps import require_role
-from app.services.audit import verify_chain_detailed
+from app.services.audit import log_event, verify_chain_detailed
 from app.services.dashboard_queries import event_types, query_logs, query_messages, query_sessions, query_summary
+from app.services.lab_queries import clear_text_metrics, query_text_records
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 analyst = Depends(require_role("analyst"))
@@ -59,8 +61,27 @@ def sessions(limit: int = Query(50, ge=1), db: Session = Depends(get_db), _: Use
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), _: User = analyst):
-    return query_summary(db)
+def summary(db: Session = Depends(get_db), lab_db: Session = Depends(get_lab_db), _: User = analyst):
+    return query_summary(db, lab_db)
+
+
+@router.get("/lab/text/records")
+def text_lab_records(
+    limit: int = Query(200, ge=1), before_id: Optional[int] = None,
+    lab_db: Session = Depends(get_lab_db), app_db: Session = Depends(get_db),
+    _: User = analyst,
+):
+    return query_text_records(lab_db, app_db, limit=limit, before_id=before_id)
+
+
+@router.delete("/lab/text")
+def clear_text_lab(
+    lab_db: Session = Depends(get_lab_db), user: User = analyst,
+):
+    deleted = clear_text_metrics(lab_db)
+    log_event("LAB_DATA_CLEARED", severity="warning", user_id=user.id,
+              details={"table": "text_metrics", "rows_deleted": deleted})
+    return {"deleted": deleted}
 
 
 @router.get("/audit-integrity")

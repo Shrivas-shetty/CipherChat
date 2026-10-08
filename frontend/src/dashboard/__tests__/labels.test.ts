@@ -13,6 +13,8 @@ describe("dashboard labels", () => {
       ["MESSAGE_SENT", "Message sent (image)", { msg_type: "image" }],
       ["SESSION_ENDED", "Session ended (logout)", { reason: "logout" }],
       ["ODD_EVENT_NAME", "Odd Event Name"],
+      ["METRICS_REJECTED", "Metrics rejected (invalid data)"],
+      ["LAB_DATA_CLEARED", "Lab data cleared"],
     ];
     for (const [type, expected, details] of cases) expect(eventLabel(type, details)).toBe(expected);
     expect(eventLabel("MESSAGE_SENT", { msg_type: "text" })).toBe("Message sent (text)");
@@ -25,5 +27,6 @@ describe("dashboard labels", () => {
   });
   it("keeps category values unique", () => {
     expect(new Set(DASHBOARD_CATEGORIES).size).toBe(DASHBOARD_CATEGORIES.length);
+    expect(DASHBOARD_CATEGORIES).toContain("lab");
   });
 });

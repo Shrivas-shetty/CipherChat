@@ -1,0 +1,141 @@
+{
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "iv_hex": "000102030405060708090a0b0c0d0e0f",
+  "cases": [
+    {
+      "pt_hex": "43697068657221",
+      "ct_hex": "36b5820caaf4df34ac309c36c920315a",
+      "key_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 70
+        },
+        {
+          "bit_idx": 7,
+          "changed_bits": 69
+        },
+        {
+          "bit_idx": 100,
+          "changed_bits": 72
+        },
+        {
+          "bit_idx": 255,
+          "changed_bits": 60
+        }
+      ],
+      "pt_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 64,
+          "block_changed_bits": 64
+        },
+        {
+          "bit_idx": 3,
+          "changed_bits": 68,
+          "block_changed_bits": 68
+        },
+        {
+          "bit_idx": 28,
+          "changed_bits": 66,
+          "block_changed_bits": 66
+        },
+        {
+          "bit_idx": 55,
+          "changed_bits": 55,
+          "block_changed_bits": 55
+        }
+      ],
+      "round_trip": "43697068657221"
+    },
+    {
+      "pt_hex": "41414141414141414141414141414141414141414141414141414141414141414141414141414141",
+      "ct_hex": "cfc6db137e91a49b51b31bce1a7b0f0f40d87b0fcf9efbef16f00d8cc33214004e4045cdd9173291e19a9555ed6edc57",
+      "key_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 174
+        },
+        {
+          "bit_idx": 7,
+          "changed_bits": 192
+        },
+        {
+          "bit_idx": 100,
+          "changed_bits": 186
+        },
+        {
+          "bit_idx": 255,
+          "changed_bits": 182
+        }
+      ],
+      "pt_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 197,
+          "block_changed_bits": 68
+        },
+        {
+          "bit_idx": 3,
+          "changed_bits": 205,
+          "block_changed_bits": 61
+        },
+        {
+          "bit_idx": 160,
+          "changed_bits": 121,
+          "block_changed_bits": 58
+        },
+        {
+          "bit_idx": 319,
+          "changed_bits": 69,
+          "block_changed_bits": 69
+        }
+      ],
+      "round_trip": "41414141414141414141414141414141414141414141414141414141414141414141414141414141"
+    },
+    {
+      "pt_hex": "4869f09f998220746865726520f09f8c8d2120636166c3a920f09f94902131323334353637383930",
+      "ct_hex": "4995b98960da1c7ed2098ea53f237fdfcf822bef1b5b3226d006487b6989fbf525c93f8d5a5ce9cae7df130f89bfead5",
+      "key_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 187
+        },
+        {
+          "bit_idx": 7,
+          "changed_bits": 193
+        },
+        {
+          "bit_idx": 100,
+          "changed_bits": 192
+        },
+        {
+          "bit_idx": 255,
+          "changed_bits": 195
+        }
+      ],
+      "pt_flip_trials": [
+        {
+          "bit_idx": 0,
+          "changed_bits": 193,
+          "block_changed_bits": 65
+        },
+        {
+          "bit_idx": 3,
+          "changed_bits": 195,
+          "block_changed_bits": 70
+        },
+        {
+          "bit_idx": 160,
+          "changed_bits": 126,
+          "block_changed_bits": 58
+        },
+        {
+          "bit_idx": 319,
+          "changed_bits": 66,
+          "block_changed_bits": 66
+        }
+      ],
+      "round_trip": "4869f09f998220746865726520f09f8c8d2120636166c3a920f09f94902131323334353637383930"
+    }
+  ]
+}
