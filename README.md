@@ -1,4 +1,4 @@
-# CipherChat (Phase 4)
+# CipherChat (Phase 5)
 
 Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and **end-to-end encrypted messaging with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC)** over a blind server relay architecture.
 
@@ -35,19 +35,27 @@ Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange
 | **Fingerprint Format** | 4 groups of 4 uppercase hex characters separated by spaces (e.g. `60B3 9698 05E7 205C`) |
 | **Confirmation Tag** | $\text{HMAC-SHA256}(K_{mac}, \text{"CC1-confirm"} \parallel \text{session\_id} \parallel \text{role\_char})$, verified in constant time |
 
-### End-to-End Encrypted Messages (Phase 4)
+### End-to-End Encrypted Messages (Phases 4–5)
 | Component | Specification |
 | :--- | :--- |
 | **Cipher** | AES-256-CBC with PKCS#7 padding |
 | **Encryption Key** | $K_{enc}$ (32 bytes derived via HKDF) |
 | **IV** | Fresh random 16 bytes per message from CSPRNG (`crypto.getRandomValues` / `os.urandom`) |
 | **Counter** | 64-bit unsigned big-endian integer, strictly monotonically increasing per sender direction |
-| **Message Type** | `"text"` (1–2000 characters, $\le 8000$ UTF-8 bytes) |
+| **Message Type** | `"text"` (1–2000 characters, $\le 8000$ UTF-8 bytes) or `"image"` (RGB pixel buffer, max 512×512) |
 | **Metadata** | Deterministic JSON string `"{}"` |
 | **Canonical MAC Input** | ASCII `"CC1-msg"` followed by 4-byte big-endian lengths and values: `session_id`, `sender_role` (`"I"` or `"R"`), `counter` (8 bytes), `msg_type`, `meta_json`, `iv` (16 bytes), `ciphertext` |
 | **Integrity Tag** | $\text{HMAC-SHA256}(K_{mac}, \text{MAC input})$ (32 bytes, constant-time compared) |
 | **Replay Protection** | ReplayGuard ensures $\text{counter} > \text{last}$; resets on session termination |
 | **Failure Reasons** | `"bad_format"`, `"replay"`, `"hmac_mismatch"`, `"decrypt_error"` |
+
+## Images (Phase 5)
+
+Images use the same session keys, AES-256-CBC + HMAC-SHA256 envelope, per-direction counter, replay guard, and verification-before-decryption flow as text. The browser decodes PNG, JPEG, WebP, or the first GIF frame, scales it to at most 512×512 without upscaling, flattens transparency onto white, then encrypts the raw row-major RGB bytes (8 bits per channel). File-format bytes such as PNG or JPEG are never sent.
+
+The authenticated cleartext metadata is the exact compact string `{"w":W,"h":H}`. The ciphertext length must be `((w*h*3 // 16)+1)*16`, including a full padding block when needed. Both dimensions are limited to 1–512; the maximum plaintext is 786,432 bytes and ciphertext 786,448 bytes. Dimensions and ciphertext length remain visible to the server and on the wire; the MAC authenticates metadata but does not encrypt it. Stored image messages are the envelope fields (IV, ciphertext, HMAC) as BLOBs, with dimensions in metadata.
+
+The UI can display the first `w*h*3` ciphertext bytes as a noise image for demonstration. That view is derived locally and is not transmitted separately. Image receive handling still checks structure, replay counter, and HMAC before decrypting, then checks strict metadata syntax, dimensions, and decoded pixel length.
 
 ---
 
@@ -177,7 +185,7 @@ Runs auth, crypto DH/KDF, envelope tests, blind-relay source grep, and REST API 
 ```powershell
 .venv\Scripts\python.exe -m pytest backend/app/tests -v
 ```
-*(41 tests passing)*
+Backend tests cover authentication, crypto, encrypted text and image envelope vectors, relay behavior, and REST verification flows.
 
 ### Frontend Tests (vitest)
 Runs in-browser cryptographic unit tests, NIST SP 800-38A F.2.5 KAT, replay guards, and cross-language vector validation:
@@ -185,7 +193,13 @@ Runs in-browser cryptographic unit tests, NIST SP 800-38A F.2.5 KAT, replay guar
 cd frontend
 npm test
 ```
-*(12 tests passing)*
+Frontend tests cover browser crypto, shared cross-language vectors, replay guards, and image pixel processing.
+
+### Image acceptance checks
+
+- Send JPEG, transparent PNG, large downscaled photo, 1×1 image, and GIF first frame; compare sender and receiver pixel hashes.
+- Confirm text and images share a continuous counter and the analyst tamper simulation rejects a modified image before decryption.
+- Confirm image database rows contain only encrypted envelope bytes, dimensions are visible metadata, and image URLs/buffers are cleared with session state.
 
 ---
 

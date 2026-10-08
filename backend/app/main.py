@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ORIGIN_REGEX
@@ -49,6 +49,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @application.middleware("http")
+    async def limit_message_post_size(request, call_next):
+        if request.method == "POST" and request.url.path == "/api/messages":
+            raw_length = request.headers.get("content-length", "")
+            if raw_length.isdigit() and int(raw_length) > 1_200_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        return await call_next(request)
 
     application.include_router(health.router)
     application.include_router(auth.router)

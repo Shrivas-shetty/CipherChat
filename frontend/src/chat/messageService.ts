@@ -4,12 +4,17 @@ import { bytesToHex } from "../crypto/encoding";
 import {
   EnvelopeError,
   encryptText,
+  encryptImage,
+  parseImageMeta,
   envelopeToWire,
   verifyAndDecrypt,
 } from "../crypto/envelope";
 import { ReplayGuard } from "../crypto/replayGuard";
 import { getSessionKeys } from "../crypto/sessionKeys";
 import type { ChatMessage, WireDetails } from "./types";
+import { decodeImage, type DecodedImage } from "../image/decode";
+import { ciphertextToNoiseRgb, sha256Hex } from "../image/pipeline";
+import { releaseAllImageUrls, releaseObjectUrl, renderRgbPng } from "../image/render";
 
 interface GetMessageResponse {
   id: number;
@@ -30,6 +35,8 @@ interface QueueItem {
   fromRole: "I" | "R";
   counter: number;
   peerUsername: string;
+  msgType: "text" | "image";
+  generation: number;
 }
 
 export type MessagesListener = (messages: ChatMessage[]) => void;
@@ -41,6 +48,7 @@ export class MessageService {
   private queue: QueueItem[] = [];
   private isProcessingQueue: boolean = false;
   private listeners: Set<MessagesListener> = new Set();
+  private generation = 0;
 
   public subscribe(listener: MessagesListener): () => void {
     this.listeners.add(listener);
@@ -62,12 +70,48 @@ export class MessageService {
   }
 
   public reset(): void {
+    this.generation += 1;
+    for (const msg of this.messages) { if (msg.image) { msg.image.rgb?.fill(0); msg.image.url = undefined; msg.image.noiseUrl = undefined; } }
+    releaseAllImageUrls();
     this.messages = [];
     this.sendCounter = 0;
     this.replayGuard.reset();
     this.queue = [];
     this.isProcessingQueue = false;
     this.notify();
+  }
+
+  public async sendImage(file: File, currentUsername: string, senderRole: "I" | "R", prepared?: DecodedImage): Promise<ChatMessage> {
+    const generation = this.generation;
+    const keys = getSessionKeys();
+    if (!keys) throw new Error("No established secure session");
+    const decoded = prepared ?? await decodeImage(file);
+    if (generation !== this.generation) { decoded.rgb.fill(0); throw new Error("Session ended"); }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const counter = ++this.sendCounter;
+    const t0 = performance.now();
+    const env = encryptImage(keys.kEnc, keys.kMac, keys.sessionId, senderRole, counter, decoded.w, decoded.h, decoded.rgb);
+    const cryptoMs = Math.round((performance.now() - t0) * 100) / 100;
+    const url = await renderRgbPng(decoded.rgb, decoded.w, decoded.h);
+    if (generation !== this.generation) { releaseObjectUrl(url); decoded.rgb.fill(0); throw new Error("Session ended"); }
+    const noiseUrl = await renderRgbPng(ciphertextToNoiseRgb(env.ct, decoded.w, decoded.h), decoded.w, decoded.h);
+    if (generation !== this.generation) { releaseObjectUrl(url); releaseObjectUrl(noiseUrl); decoded.rgb.fill(0); throw new Error("Session ended"); }
+    let res: { id: number; created_at: string };
+    try {
+      res = await requestJson<{ id: number; created_at: string }>("/api/messages", {
+        method: "POST", body: JSON.stringify(envelopeToWire(env)),
+      });
+    } catch (err) {
+      releaseObjectUrl(url); releaseObjectUrl(noiseUrl);
+      if (!prepared) decoded.rgb.fill(0);
+      throw err;
+    }
+    if (generation !== this.generation) { releaseObjectUrl(url); releaseObjectUrl(noiseUrl); decoded.rgb.fill(0); throw new Error("Session ended"); }
+    const pixelHash = sha256Hex(decoded.rgb).slice(0, 16);
+    const wire: WireDetails = { counter, ivHex: bytesToHex(env.iv), ctHex: bytesToHex(env.ct), ctLength: env.ct.length, hmacHex: bytesToHex(env.hmac), latencyMs: decoded.decodeMs + cryptoMs, verified: false, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, decodeMs: decoded.decodeMs, cryptoMs, pixelHash } };
+    const msg: ChatMessage = { id: String(res.id), counter, senderRole, mine: true, senderUsername: currentUsername, text: "", status: "sent", ts: res.created_at, wire, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, pixelHash, url, noiseUrl, decodeMs: decoded.decodeMs, cryptoMs } };
+    msg.image!.rgb = new Uint8Array(decoded.rgb);
+    this.messages.push(msg); this.notify(); return msg;
   }
 
   /**
@@ -143,14 +187,17 @@ export class MessageService {
     messageId: number,
     fromRole: "I" | "R",
     counter: number,
-    peerUsername: string
+    peerUsername: string,
+    msgType: "text" | "image" = "text"
   ): void {
     this.queue.push({
       sessionId,
       messageId,
       fromRole,
       counter,
+      msgType,
       peerUsername,
+      generation: this.generation,
     });
     void this.processQueue();
   }
@@ -168,12 +215,14 @@ export class MessageService {
       } catch (err) {
         console.error("Error processing incoming message queue item", err);
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
     this.isProcessingQueue = false;
   }
 
   private async handleSingleIncoming(item: QueueItem): Promise<void> {
+    if (item.generation !== this.generation) return;
     const keys = getSessionKeys();
     if (!keys || keys.sessionId.toLowerCase() !== item.sessionId.toLowerCase()) {
       return;
@@ -183,6 +232,9 @@ export class MessageService {
     const res = await requestJson<GetMessageResponse>(
       `/api/messages/${item.messageId}`
     );
+    if (item.generation !== this.generation) return;
+    const activeKeys = getSessionKeys();
+    if (!activeKeys || activeKeys.sessionId.toLowerCase() !== item.sessionId.toLowerCase()) return;
 
     // 2. Strict pipeline: format -> replay -> HMAC -> decrypt
     let iv: Uint8Array = new Uint8Array();
@@ -192,16 +244,24 @@ export class MessageService {
     let failureReason: string | undefined = undefined;
     let decryptedText = "";
     let latencyMs = 0;
+    let receivedImage: { w: number; h: number; rgb: Uint8Array } | undefined;
 
     const t0 = performance.now();
     try {
-      iv = base64ToBytes(res.iv);
-      ct = base64ToBytes(res.ct);
-      hmac = base64ToBytes(res.hmac);
+      if (res.msg_type !== item.msgType || res.from_role !== item.fromRole || res.counter !== item.counter) {
+        throw new EnvelopeError("bad_format");
+      }
+      try {
+        iv = base64ToBytes(res.iv);
+        ct = base64ToBytes(res.ct);
+        hmac = base64ToBytes(res.hmac);
+      } catch {
+        throw new EnvelopeError("bad_format");
+      }
 
-      decryptedText = verifyAndDecrypt(
-        keys.kEnc,
-        keys.kMac,
+      const decrypted = verifyAndDecrypt(
+        activeKeys.kEnc,
+        activeKeys.kMac,
         item.sessionId,
         item.fromRole,
         {
@@ -217,6 +277,13 @@ export class MessageService {
         this.replayGuard.getLast(item.fromRole)
       );
 
+      if (item.msgType === "image") {
+        const { w, h } = parseImageMeta(res.meta_json);
+        const rgb = decrypted as unknown as Uint8Array;
+        decryptedText = "";
+        receivedImage = { w, h, rgb: new Uint8Array(rgb) };
+      } else decryptedText = decrypted as unknown as string;
+
       this.replayGuard.commit(item.fromRole, res.counter);
       verified = true;
     } catch (err) {
@@ -227,6 +294,20 @@ export class MessageService {
       }
     }
     latencyMs = Math.round((performance.now() - t0) * 100) / 100;
+
+    let renderedUrl: string | undefined;
+    let noiseUrl: string | undefined;
+    let imageInfo: ChatMessage["image"];
+    if (verified && item.msgType === "image" && receivedImage) {
+      renderedUrl = await renderRgbPng(receivedImage.rgb, receivedImage.w, receivedImage.h);
+      noiseUrl = await renderRgbPng(ciphertextToNoiseRgb(ct, receivedImage.w, receivedImage.h), receivedImage.w, receivedImage.h);
+      const pixelHash = sha256Hex(receivedImage.rgb).slice(0, 16);
+      imageInfo = { w: receivedImage.w, h: receivedImage.h, plaintextBytes: receivedImage.rgb.length, overheadBytes: ct.length + 48 - receivedImage.rgb.length, pixelHash, url: renderedUrl, noiseUrl, rgb: receivedImage.rgb, cryptoMs: latencyMs };
+    } else if (item.msgType === "image") {
+      let w = 0, h = 0;
+      try { ({ w, h } = parseImageMeta(res.meta_json)); } catch { /* invalid metadata remains a failed placeholder */ }
+      imageInfo = { w, h, plaintextBytes: w * h * 3, overheadBytes: ct.length + 48 - w * h * 3, pixelHash: "", placeholder: true };
+    }
 
     // 3. Report verification result to server
     try {
@@ -251,6 +332,7 @@ export class MessageService {
       latencyMs,
       verified,
       reason: failureReason,
+      image: imageInfo ? { w: imageInfo.w, h: imageInfo.h, plaintextBytes: imageInfo.plaintextBytes, overheadBytes: imageInfo.overheadBytes, decodeMs: imageInfo.decodeMs, cryptoMs: imageInfo.cryptoMs, pixelHash: imageInfo.pixelHash } : undefined,
     };
 
     const newMsg: ChatMessage = {
@@ -266,6 +348,7 @@ export class MessageService {
       failureReason,
       ts: res.created_at,
       wire,
+      image: imageInfo,
     };
 
     this.messages.push(newMsg);

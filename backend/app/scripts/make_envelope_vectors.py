@@ -2,7 +2,7 @@ import base64
 import json
 from pathlib import Path
 
-from app.crypto.envelope import build_mac_input, encrypt_message
+from app.crypto.envelope import build_mac_input, encrypt_message, image_meta_json
 
 
 def generate_vectors() -> dict:
@@ -50,6 +50,25 @@ def generate_vectors() -> dict:
         }
     )
 
+    for name, w, h, role, counter, iv_hex in (
+        ("image_4x3", 4, 3, "I", 2, "202122232425262728292a2b2c2d2e2f"),
+        ("image_16x1", 16, 1, "R", 2, "303132333435363738393a3b3c3d3e3f"),
+    ):
+        pixels = bytes((i * 37 + 11) % 256 for i in range(w * h * 3))
+        meta = image_meta_json(w, h)
+        iv = bytes.fromhex(iv_hex)
+        env = encrypt_message(k_enc, k_mac, session_id, role, counter, pixels, "image", meta, iv)
+        cases.append({
+            "name": name, "session_id": session_id, "sender_role": role, "counter": counter,
+            "msg_type": "image", "meta_json": meta, "w": w, "h": h,
+            "pixel_hex": pixels.hex(), "plaintext_hex": pixels.hex(), "iv_hex": iv.hex(),
+            "plaintext": "",
+            "iv_b64": env.iv_b64,
+            "mac_input_hex": build_mac_input(session_id, role, counter, "image", meta, iv, env.ct).hex(),
+            "ct_hex": env.ct.hex(), "ct_b64": env.ct_b64,
+            "hmac_hex": env.hmac.hex(), "hmac_b64": env.hmac_b64,
+        })
+
     # Case 2: Unicode & Emoji message
     c2_role = "R"
     c2_counter = 1
@@ -89,7 +108,7 @@ def generate_vectors() -> dict:
     )
 
     return {
-        "description": "CipherChat Phase 4 AES-256-CBC + HMAC-SHA256 envelope test vectors",
+        "description": "CipherChat AES-256-CBC + HMAC-SHA256 text and image envelope test vectors",
         "cipher": "aes-256-cbc-pkcs7",
         "mac": "hmac-sha256",
         "k_enc_hex": k_enc.hex(),

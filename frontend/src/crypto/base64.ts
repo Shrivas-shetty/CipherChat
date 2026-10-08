@@ -3,16 +3,16 @@
  */
 
 export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 32 * 1024) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32 * 1024)));
   }
-  return btoa(binary);
+  return btoa(chunks.join(""));
 }
 
 export function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64.trim());
+  const normalized = b64.trim();
+  const binary = atob(normalized);
   const len = binary.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {

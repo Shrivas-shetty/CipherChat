@@ -4,12 +4,33 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { bytesToHex } from "./encoding";
 import { constantTimeCompare } from "./kdf";
+import { MAX_IMAGE_DIM } from "../image/constants";
+
+export { MAX_IMAGE_DIM } from "../image/constants";
 
 export type EnvelopeFailureReason =
   | "bad_format"
   | "replay"
   | "hmac_mismatch"
   | "decrypt_error";
+
+export const MAX_IMAGE_CIPHERTEXT_BYTES = 786_448;
+
+export function imageMetaJson(w: number, h: number): string {
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM) {
+    throw new EnvelopeError("bad_format");
+  }
+  return `{"w":${w},"h":${h}}`;
+}
+
+export function parseImageMeta(metaJson: string): { w: number; h: number } {
+  const match = /^\{"w":([1-9][0-9]{0,2}),"h":([1-9][0-9]{0,2})\}$/.exec(metaJson);
+  if (!match) throw new EnvelopeError("bad_format");
+  const w = Number(match[1]);
+  const h = Number(match[2]);
+  if (w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM) throw new EnvelopeError("bad_format");
+  return { w, h };
+}
 
 export class EnvelopeError extends Error {
   public reason: EnvelopeFailureReason;
@@ -170,6 +191,20 @@ export function encryptText(
   };
 }
 
+export function encryptImage(
+  kEnc: Uint8Array, kMac: Uint8Array, sessionId: string, senderRole: "I" | "R",
+  counter: number, w: number, h: number, rgb: Uint8Array, injectedIv?: Uint8Array
+): Envelope {
+  const meta = imageMetaJson(w, h);
+  if (rgb.length !== w * h * 3) throw new EnvelopeError("bad_format");
+  if (kEnc.length !== 32 || kMac.length !== 32 || counter < 1) throw new Error("Invalid envelope key or counter");
+  const iv = injectedIv ? new Uint8Array(injectedIv) : crypto.getRandomValues(new Uint8Array(16));
+  if (iv.length !== 16) throw new Error("Injected IV must be 16 bytes");
+  const ct = cbc(kEnc, iv).encrypt(rgb);
+  const macIn = buildMacInput(sessionId, senderRole, counter, "image", meta, iv, ct);
+  return { session_id: sessionId.trim().toLowerCase(), sender_role: senderRole, counter, msg_type: "image", meta_json: meta, iv, ct, hmac: hmac(sha256, kMac, macIn) };
+}
+
 export function verifyAndDecrypt(
   kEnc: Uint8Array,
   kMac: Uint8Array,
@@ -177,7 +212,7 @@ export function verifyAndDecrypt(
   senderRole: "I" | "R",
   envelope: Envelope,
   lastCounter: number
-): string {
+): string | Uint8Array {
   // 1. Format checks
   if (
     !envelope.iv ||
@@ -186,14 +221,14 @@ export function verifyAndDecrypt(
     envelope.hmac.length !== 32 ||
     !envelope.ct ||
     envelope.ct.length < 16 ||
-    envelope.ct.length > 8192 ||
+    envelope.ct.length > (envelope.msg_type === "image" ? MAX_IMAGE_CIPHERTEXT_BYTES : 8192) ||
     envelope.ct.length % 16 !== 0 ||
     typeof envelope.counter !== "number" ||
     envelope.counter < 1 ||
     envelope.sender_role !== senderRole ||
     envelope.session_id.trim().toLowerCase() !== sessionId.trim().toLowerCase() ||
-    envelope.msg_type !== "text" ||
-    envelope.meta_json !== "{}"
+    (envelope.msg_type !== "text" && envelope.msg_type !== "image") ||
+    (envelope.msg_type === "text" && envelope.meta_json !== "{}" && !/^\{"w":[1-9][0-9]{0,2},"h":[1-9][0-9]{0,2}\}$/.test(envelope.meta_json))
   ) {
     throw new EnvelopeError("bad_format");
   }
@@ -225,10 +260,16 @@ export function verifyAndDecrypt(
   try {
     const cipher = cbc(kEnc, envelope.iv);
     const ptBytes = cipher.decrypt(envelope.ct);
-    const text = decoder.decode(ptBytes);
-    if (text.length < 1 || text.length > 2000 || ptBytes.length > 8000) {
-      throw new EnvelopeError("decrypt_error");
+    if (envelope.msg_type === "image") {
+      const { w, h } = parseImageMeta(envelope.meta_json);
+      if (ptBytes.length !== w * h * 3 || envelope.ct.length !== Math.floor((w * h * 3) / 16 + 1) * 16) {
+        throw new EnvelopeError("bad_format");
+      }
+      return ptBytes;
     }
+    if (envelope.meta_json !== "{}") throw new EnvelopeError("bad_format");
+    const text = decoder.decode(ptBytes);
+    if (text.length < 1 || text.length > 2000 || ptBytes.length > 8000) throw new EnvelopeError("decrypt_error");
     return text;
   } catch (err) {
     if (err instanceof EnvelopeError) {

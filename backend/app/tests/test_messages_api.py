@@ -18,6 +18,7 @@ from app.crypto.envelope import (
     EnvelopeError,
     encrypt_message,
     verify_and_decrypt,
+    image_meta_json,
 )
 from app.crypto.kdf import (
     confirm_tag,
@@ -241,6 +242,100 @@ def test_full_messages_happy_path(client: TestClient):
         assert ws_status["type"] == "message_status"
         assert ws_status["message_id"] == msg_id
         assert ws_status["status"] == "verified"
+
+
+def test_image_messages_rest_round_trip_and_metadata(client: TestClient):
+    alice_token = _get_token(client, "alice")
+    bob_token = _get_token(client, "bob")
+    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+        session_id, keys_a, keys_b = _establish_session(client, ws_a, ws_b, alice_token, bob_token)
+        text_env = encrypt_message(keys_a.k_enc, keys_a.k_mac, session_id, "I", 1, b"before image")
+        text_sent = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json={"session_id": session_id, "counter": 1, "msg_type": "text", "meta_json": "{}", "iv": text_env.iv_b64, "ct": text_env.ct_b64, "hmac": text_env.hmac_b64})
+        assert text_sent.status_code == 201
+        assert ws_b.receive_json()["msg_type"] == "text"
+        pixels = bytes((i * 37 + 11) % 256 for i in range(4 * 3 * 3))
+        env = encrypt_message(keys_a.k_enc, keys_a.k_mac, session_id, "I", 2, pixels, "image", image_meta_json(4, 3))
+        sent = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json={"session_id": session_id, "counter": 2, "msg_type": "image", "meta_json": env.meta_json, "iv": env.iv_b64, "ct": env.ct_b64, "hmac": env.hmac_b64})
+        assert sent.status_code == 201
+        notice = ws_b.receive_json()
+        assert notice["msg_type"] == "image" and notice["counter"] == 2
+        fetched = client.get(f"/api/messages/{sent.json()['id']}", headers={"Authorization": f"Bearer {bob_token}"}).json()
+        received = Envelope(fetched["session_id"], fetched["from_role"], fetched["counter"], fetched["msg_type"], fetched["meta_json"], base64.b64decode(fetched["iv"]), base64.b64decode(fetched["ct"]), base64.b64decode(fetched["hmac"]))
+        assert verify_and_decrypt(keys_b.k_enc, keys_b.k_mac, session_id, "I", received, 1) == pixels
+        reported = client.post(f"/api/messages/{sent.json()['id']}/verification", headers={"Authorization": f"Bearer {bob_token}"}, json={"status": "verified"})
+        assert reported.status_code == 204
+        assert ws_a.receive_json()["status"] == "verified"
+    with base.SessionLocal() as db:
+        entry = db.query(AuditLog).filter(AuditLog.event_type == "MESSAGE_SENT").order_by(AuditLog.id.desc()).first()
+        assert entry.details["w"] == 4 and entry.details["h"] == 3
+
+
+def test_image_meta_and_ciphertext_length_rejections(client: TestClient):
+    alice_token = _get_token(client, "alice")
+    bob_token = _get_token(client, "bob")
+    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+        session_id, _, _ = _establish_session(client, ws_a, ws_b, alice_token, bob_token)
+        body = {"session_id": session_id, "counter": 1, "msg_type": "image", "meta_json": '{"w":4,"h":3}', "iv": base64.b64encode(b"0" * 16).decode(), "ct": base64.b64encode(b"0" * 16).decode(), "hmac": base64.b64encode(b"0" * 32).decode()}
+        assert client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json=body).json()["detail"] == "bad_ct_length"
+        body["meta_json"] = '{"h":3,"w":4}'
+        assert client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json=body).json()["detail"] == "bad_meta"
+        for invalid in ('{"w": 4,"h":3}', '{"h":3,"w":4}', '{"w":04,"h":3}', '{"w":0,"h":3}', '{"w":513,"h":3}', '{"w":"4","h":3}', '{"w":4,"h":3,"x":1}', '{}'):
+            body["meta_json"] = invalid
+            bad = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json=body)
+            assert bad.status_code == 400 and bad.json()["detail"] == "bad_meta"
+        body["msg_type"] = "text"
+        body["meta_json"] = '{"w":4,"h":3}'
+        assert client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json=body).status_code == 400
+
+
+def test_image_post_body_size_guard(client: TestClient):
+    alice_token = _get_token(client, "alice")
+    body = {"session_id": "x", "counter": 1, "msg_type": "image", "meta_json": '{"w":1,"h":1}', "iv": "A" * 24, "ct": "A" * 900, "hmac": "A" * 44, "padding": "x" * 1_201_000}
+    response = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json=body)
+    assert response.status_code == 413
+
+
+def test_image_pixel_plaintext_never_persisted(client: TestClient, setup_test_db, caplog):
+    alice_token = _get_token(client, "alice")
+    bob_token = _get_token(client, "bob")
+    marker = b"PIXEL_SECRET_MARKER_32_BYTES_LONG"
+    pixels = marker + bytes(300 - len(marker))
+    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+        session_id, keys, _ = _establish_session(client, ws_a, ws_b, alice_token, bob_token)
+        env = encrypt_message(keys.k_enc, keys.k_mac, session_id, "I", 1, pixels, "image", image_meta_json(10, 10))
+        response = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json={"session_id": session_id, "counter": 1, "msg_type": "image", "meta_json": env.meta_json, "iv": env.iv_b64, "ct": env.ct_b64, "hmac": env.hmac_b64})
+        assert response.status_code == 201
+    assert marker not in setup_test_db.read_bytes()
+    assert marker.decode() not in caplog.text
+
+
+def test_image_tamper_changes_only_served_copy(client: TestClient):
+    alice_token = _get_token(client, "alice")
+    bob_token = _get_token(client, "bob")
+    analyst_token = _get_token(client, "analyst1", role="analyst")
+    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+        session_id, keys_a, keys_b = _establish_session(client, ws_a, ws_b, alice_token, bob_token)
+        pixels = bytes([12, 34, 56])
+        env = encrypt_message(keys_a.k_enc, keys_a.k_mac, session_id, "I", 1, pixels, "image", image_meta_json(1, 1))
+        sent = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json={"session_id": session_id, "counter": 1, "msg_type": "image", "meta_json": env.meta_json, "iv": env.iv_b64, "ct": env.ct_b64, "hmac": env.hmac_b64})
+        msg_id = sent.json()["id"]
+        ws_b.receive_json()
+        client.post("/api/admin/tamper", headers={"Authorization": f"Bearer {analyst_token}"}, json={"armed": True})
+        fetched = client.get(f"/api/messages/{msg_id}", headers={"Authorization": f"Bearer {bob_token}"}).json()
+        served = Envelope(fetched["session_id"], "I", 1, "image", fetched["meta_json"], base64.b64decode(fetched["iv"]), base64.b64decode(fetched["ct"]), base64.b64decode(fetched["hmac"]))
+        with pytest.raises(EnvelopeError, match="hmac_mismatch"):
+            verify_and_decrypt(keys_b.k_enc, keys_b.k_mac, session_id, "I", served, 0)
+        with base.SessionLocal() as db:
+            assert db.query(Message).filter(Message.id == msg_id).first().ct == env.ct
+        client.post(f"/api/messages/{msg_id}/verification", headers={"Authorization": f"Bearer {bob_token}"}, json={"status": "failed", "reason": "hmac_mismatch"})
+        assert ws_a.receive_json()["status"] == "failed"
+
+        next_env = encrypt_message(keys_a.k_enc, keys_a.k_mac, session_id, "I", 2, pixels, "image", image_meta_json(1, 1))
+        next_sent = client.post("/api/messages", headers={"Authorization": f"Bearer {alice_token}"}, json={"session_id": session_id, "counter": 2, "msg_type": "image", "meta_json": next_env.meta_json, "iv": next_env.iv_b64, "ct": next_env.ct_b64, "hmac": next_env.hmac_b64})
+        ws_b.receive_json()
+        next_data = client.get(f"/api/messages/{next_sent.json()['id']}", headers={"Authorization": f"Bearer {bob_token}"}).json()
+        valid = Envelope(next_data["session_id"], "I", 2, "image", next_data["meta_json"], base64.b64decode(next_data["iv"]), base64.b64decode(next_data["ct"]), base64.b64decode(next_data["hmac"]))
+        assert verify_and_decrypt(keys_b.k_enc, keys_b.k_mac, session_id, "I", valid, 1) == pixels
 
 
 def test_fetch_authorization(client: TestClient):

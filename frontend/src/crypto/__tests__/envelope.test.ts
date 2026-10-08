@@ -8,6 +8,7 @@ import { bytesToHex, hexToBytes } from "../encoding";
 import {
   buildMacInput,
   encryptText,
+  encryptImage,
   EnvelopeError,
   verifyAndDecrypt,
 } from "../envelope";
@@ -34,13 +35,15 @@ describe("Phase 4 AES-256-CBC + HMAC-SHA256 Message Envelope", () => {
 
     for (const testCase of vectorJson.cases) {
       const iv = hexToBytes(testCase.iv_hex);
-      const env = encryptText(
+      const env = testCase.msg_type === "image"
+        ? encryptImage(kEnc, kMac, testCase.session_id, testCase.sender_role as "I" | "R", testCase.counter, testCase.w!, testCase.h!, hexToBytes(testCase.pixel_hex!), iv)
+        : encryptText(
         kEnc,
         kMac,
         testCase.session_id,
         testCase.sender_role as "I" | "R",
         testCase.counter,
-        testCase.plaintext,
+        testCase.plaintext!,
         iv
       );
 
@@ -48,8 +51,8 @@ describe("Phase 4 AES-256-CBC + HMAC-SHA256 Message Envelope", () => {
         testCase.session_id,
         testCase.sender_role as "I" | "R",
         testCase.counter,
-        "text",
-        "{}",
+        testCase.msg_type,
+        testCase.meta_json,
         iv,
         env.ct
       );
@@ -78,7 +81,7 @@ describe("Phase 4 AES-256-CBC + HMAC-SHA256 Message Envelope", () => {
         },
         0
       );
-      expect(decrypted).toBe(testCase.plaintext);
+      expect(testCase.msg_type === "image" ? bytesToHex(decrypted as Uint8Array) : decrypted).toBe(testCase.msg_type === "image" ? testCase.pixel_hex : testCase.plaintext);
     }
   });
 
@@ -105,6 +108,14 @@ describe("Phase 4 AES-256-CBC + HMAC-SHA256 Message Envelope", () => {
       lastCounter = counter;
       counter++;
     }
+  });
+
+  it("authenticates image envelopes before metadata and decrypt validation", () => {
+    const kEnc = new Uint8Array(32).fill(7), kMac = new Uint8Array(32).fill(8);
+    const rgb = new Uint8Array(36).map((_, i) => (i * 37 + 11) & 255);
+    const image = encryptImage(kEnc, kMac, "img-session", "I", 1, 4, 3, rgb);
+    expect(verifyAndDecrypt(kEnc, kMac, "img-session", "I", image, 0) as Uint8Array).toEqual(rgb);
+    expect(() => verifyAndDecrypt(kEnc, kMac, "img-session", "I", { ...image, msg_type: "text" }, 0)).toThrowError(new EnvelopeError("hmac_mismatch"));
   });
 
   it("verifies mutation matrix errors", () => {

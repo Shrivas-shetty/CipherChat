@@ -7,12 +7,36 @@ from typing import Optional
 
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from app.image import MAX_IMAGE_CIPHERTEXT_BYTES, MAX_IMAGE_DIM, ImageFormatError, expected_image_ct_len as _expected_image_ct_len, image_meta_json as _image_meta_json, is_image_meta, parse_image_meta as _parse_image_meta
 
 
 class EnvelopeError(Exception):
     def __init__(self, reason: str):
         super().__init__(reason)
         self.reason = reason
+
+
+def image_meta_json(w: int, h: int) -> str:
+    try:
+        return _image_meta_json(w, h)
+    except ImageFormatError as exc:
+        raise EnvelopeError("bad_format") from exc
+
+
+def parse_image_meta(meta_json: str) -> tuple[int, int]:
+    try:
+        return _parse_image_meta(meta_json)
+    except ImageFormatError as exc:
+        raise EnvelopeError("bad_format") from exc
+
+
+def expected_image_ct_len(w: int, h: int) -> int:
+    try:
+        return _expected_image_ct_len(w, h)
+    except ImageFormatError as exc:
+        raise EnvelopeError("bad_format") from exc
+
+
 
 
 @dataclass
@@ -115,12 +139,17 @@ def encrypt_message(
         raise ValueError("sender_role must be 'I' or 'R'")
     if counter < 1:
         raise ValueError("counter must be >= 1")
-    if msg_type != "text":
-        raise ValueError("msg_type must be 'text'")
-    if meta_json != "{}":
-        raise ValueError("meta_json must be '{}'")
-    if len(plaintext_bytes) < 1 or len(plaintext_bytes) > 8000:
-        raise ValueError("plaintext_bytes must be between 1 and 8000 bytes")
+    if msg_type not in ("text", "image"):
+        raise ValueError("msg_type must be 'text' or 'image'")
+    if msg_type == "text":
+        if meta_json != "{}":
+            raise ValueError("meta_json must be '{}' for text")
+        if len(plaintext_bytes) < 1 or len(plaintext_bytes) > 8000:
+            raise ValueError("plaintext_bytes must be between 1 and 8000 bytes")
+    else:
+        w, h = parse_image_meta(meta_json)
+        if len(plaintext_bytes) != w * h * 3:
+            raise ValueError("image plaintext length does not match dimensions")
 
     if iv is None:
         iv = os.urandom(16)
@@ -171,15 +200,15 @@ def verify_and_decrypt(
         and isinstance(envelope.hmac, (bytes, bytearray))
         and len(envelope.hmac) == 32
         and isinstance(envelope.ct, (bytes, bytearray))
-        and 16 <= len(envelope.ct) <= 8192
+        and 16 <= len(envelope.ct) <= (8192 if envelope.msg_type == "text" else MAX_IMAGE_CIPHERTEXT_BYTES)
         and len(envelope.ct) % 16 == 0
         and isinstance(envelope.counter, int)
         and envelope.counter >= 1
         and envelope.sender_role in ("I", "R")
         and envelope.sender_role == sender_role
         and envelope.session_id.strip().lower() == session_id.strip().lower()
-        and envelope.msg_type == "text"
-        and envelope.meta_json == "{}"
+        and envelope.msg_type in ("text", "image")
+        and (envelope.msg_type == "image" or envelope.meta_json == "{}" or is_image_meta(envelope.meta_json))
     ):
         raise EnvelopeError("bad_format")
 
@@ -210,9 +239,16 @@ def verify_and_decrypt(
         unpadder = padding.PKCS7(128).unpadder()
         pt = unpadder.update(padded) + unpadder.finalize()
 
-        pt_str = pt.decode("utf-8")
-        if not (1 <= len(pt_str) <= 2000 and 1 <= len(pt) <= 8000):
-            raise EnvelopeError("decrypt_error")
+        if envelope.msg_type == "text":
+            if envelope.meta_json != "{}":
+                raise EnvelopeError("bad_format")
+            pt_str = pt.decode("utf-8")
+            if not (1 <= len(pt_str) <= 2000 and 1 <= len(pt) <= 8000):
+                raise EnvelopeError("decrypt_error")
+        else:
+            w, h = parse_image_meta(envelope.meta_json)
+            if len(pt) != w * h * 3 or len(envelope.ct) != expected_image_ct_len(w, h):
+                raise EnvelopeError("bad_format")
         return pt
     except EnvelopeError:
         raise

@@ -117,6 +117,7 @@ export type IncomingMessageAvailable = {
   message_id: number;
   from_role: "I" | "R";
   counter: number;
+  msg_type?: "text" | "image";
 };
 
 export type IncomingMessageStatus = {

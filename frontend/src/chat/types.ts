@@ -7,6 +7,7 @@ export interface WireDetails {
   latencyMs: number;
   verified: boolean;
   reason?: string;
+  image?: { w: number; h: number; plaintextBytes: number; overheadBytes: number; decodeMs?: number; cryptoMs?: number; pixelHash: string };
 }
 
 export type MessageStatus =
@@ -28,5 +29,6 @@ export interface ChatMessage {
   failureReason?: string;
   ts: string;
   wire?: WireDetails;
+  image?: { w: number; h: number; plaintextBytes: number; overheadBytes: number; pixelHash: string; url?: string; noiseUrl?: string; rgb?: Uint8Array; decodeMs?: number; cryptoMs?: number; placeholder?: boolean };
 }
 

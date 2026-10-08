@@ -2,8 +2,8 @@ import base64
 import binascii
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.db.models import ChatSession, Message, User, to_iso_z, utc_now
 from app.deps import get_current_user
 from app.services.audit import log_event
 from app.services.tamper import tamper_service
+from app.image import MAX_IMAGE_CIPHERTEXT_BYTES, ImageFormatError, expected_image_ct_len, parse_image_meta
 from app.ws.manager import manager
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
@@ -21,13 +22,13 @@ VALID_REASONS = {"bad_format", "replay", "hmac_mismatch", "decrypt_error"}
 
 
 class SendMessageRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(max_length=64)
     counter: int
-    msg_type: str = "text"
-    meta_json: str = "{}"
-    iv: str
-    ct: str
-    hmac: str
+    msg_type: str = Field(default="text", max_length=10)
+    meta_json: str = Field(default="{}", max_length=32)
+    iv: str = Field(max_length=24)
+    ct: str = Field(max_length=1_048_700)
+    hmac: str = Field(max_length=44)
 
 
 class VerifyMessageRequest(BaseModel):
@@ -38,9 +39,13 @@ class VerifyMessageRequest(BaseModel):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def send_message(
     req: SendMessageRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > 1_200_000:
+        raise HTTPException(status_code=413, detail="Request body too large")
     session_id = req.session_id.strip().lower()
     chat_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
 
@@ -76,7 +81,7 @@ async def send_message(
         )
 
     # Validate message type & meta
-    if req.msg_type != "text":
+    if req.msg_type not in ("text", "image"):
         log_event(
             "MESSAGE_REJECTED",
             severity="warning",
@@ -86,10 +91,11 @@ async def send_message(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="msg_type must be 'text'",
+            detail="msg_type must be 'text' or 'image'",
         )
 
-    if req.meta_json != "{}":
+    image_dims = None
+    if req.msg_type == "text" and req.meta_json != "{}":
         log_event(
             "MESSAGE_REJECTED",
             severity="warning",
@@ -109,6 +115,13 @@ async def send_message(
     else:
         sender_role = "R"
         recipient_id = chat_session.user_a_id
+
+    if req.msg_type == "image":
+        try:
+            image_dims = parse_image_meta(req.meta_json)
+        except ImageFormatError:
+            log_event("MESSAGE_REJECTED", severity="warning", user_id=current_user.id, session_id=session_id, details={"reason": "bad_meta"})
+            raise HTTPException(status_code=400, detail="bad_meta")
 
     # Format & Base64 validation
     try:
@@ -143,7 +156,7 @@ async def send_message(
 
     if (
         len(ct_bytes) < 16
-        or len(ct_bytes) > config.MESSAGE_CIPHERTEXT_MAX_BYTES
+        or len(ct_bytes) > (config.MESSAGE_CIPHERTEXT_MAX_BYTES if req.msg_type == "text" else MAX_IMAGE_CIPHERTEXT_BYTES)
         or len(ct_bytes) % 16 != 0
     ):
         log_event(
@@ -151,12 +164,16 @@ async def send_message(
             severity="warning",
             user_id=current_user.id,
             session_id=session_id,
-            details={"reason": "bad_format", "sub_reason": "invalid_ct_size"},
+            details={"reason": "bad_ct_length" if req.msg_type == "image" else "bad_format", "sub_reason": "invalid_ct_size"},
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ciphertext must be between 16 and 8192 bytes and a multiple of 16",
+            detail="bad_ct_length" if req.msg_type == "image" else "Ciphertext size is invalid",
         )
+
+    if image_dims and len(ct_bytes) != expected_image_ct_len(*image_dims):
+        log_event("MESSAGE_REJECTED", severity="warning", user_id=current_user.id, session_id=session_id, details={"reason": "bad_ct_length"})
+        raise HTTPException(status_code=400, detail="bad_ct_length")
 
     # Counter validation
     if req.counter < 1:
@@ -223,6 +240,7 @@ async def send_message(
             "msg_type": msg.msg_type,
             "counter": msg.counter,
             "size_bytes": msg.size_bytes,
+            **({"w": image_dims[0], "h": image_dims[1]} if image_dims else {}),
         },
     )
 
@@ -238,6 +256,7 @@ async def send_message(
                 "message_id": msg.id,
                 "from_role": sender_role,
                 "counter": msg.counter,
+                "msg_type": msg.msg_type,
             },
         )
 

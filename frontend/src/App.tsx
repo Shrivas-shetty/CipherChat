@@ -151,6 +151,7 @@ function MainApp() {
         setDisconnected(true);
         handshakeRef.current?.handleSessionTerminated("", "disconnect");
         clearSessionKeys();
+        messageService.reset();
       },
       onFrame: (frame: IncomingFrame) => {
         switch (frame.type) {
@@ -205,6 +206,7 @@ function MainApp() {
               frame.reason
             );
             clearSessionKeys();
+            messageService.reset();
             break;
           case "message_available":
             messageService.enqueueIncoming(
@@ -212,7 +214,8 @@ function MainApp() {
               frame.message_id,
               frame.from_role,
               frame.counter,
-              peerNameRef.current ?? "Peer"
+              peerNameRef.current ?? "Peer",
+              frame.msg_type ?? "text"
             );
             break;
           case "message_status":
@@ -274,6 +277,11 @@ function MainApp() {
     }
     const roleCode = sessionRoleRef.current === "initiator" ? "I" : "R";
     await messageService.sendText(text, user.username, roleCode);
+  }
+
+  async function onSendImage(file: File, prepared?: import("./image/decode").DecodedImage) {
+    if (!user || !sessionRoleRef.current) throw new Error("No active secure session");
+    await messageService.sendImage(file, user.username, sessionRoleRef.current === "initiator" ? "I" : "R", prepared);
   }
 
   function handleRequestSession() {
@@ -340,6 +348,7 @@ function MainApp() {
       terminationReason={terminationReason}
       onRequestSession={handleRequestSession}
       onSend={onSend}
+      onSendImage={onSendImage}
       onLogout={handleLogout}
       onReconnect={handleReconnect}
     />

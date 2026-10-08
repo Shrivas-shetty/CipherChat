@@ -14,6 +14,7 @@ from app.crypto.envelope import (
     EnvelopeError,
     build_mac_input,
     encrypt_message,
+    image_meta_json,
     verify_and_decrypt,
 )
 from app.scripts.make_envelope_vectors import generate_vectors
@@ -375,4 +376,29 @@ def test_shared_test_vectors_json_match():
             envelope=env,
             last_counter=0,
         )
-        assert pt.decode("utf-8") == case["plaintext"]
+        if case["msg_type"] == "image":
+            assert pt.hex() == case["pixel_hex"]
+        else:
+            assert pt.decode("utf-8") == case["plaintext"]
+
+
+@pytest.mark.parametrize("w,h", [(4, 3), (16, 1), (64, 64), (512, 512)])
+def test_image_envelope_round_trip(w, h):
+    k_enc, k_mac, sid = b"E" * 32, b"M" * 32, "image-test"
+    pixels = os.urandom(w * h * 3)
+    env = encrypt_message(k_enc, k_mac, sid, "I", 1, pixels, "image", image_meta_json(w, h))
+    assert verify_and_decrypt(k_enc, k_mac, sid, "I", env, 0) == pixels
+
+
+def test_image_meta_is_checked_after_hmac():
+    k_enc, k_mac, sid = b"E" * 32, b"M" * 32, "image-test"
+    pixels = os.urandom(4 * 3 * 3)
+    env = encrypt_message(k_enc, k_mac, sid, "I", 1, pixels, "image", image_meta_json(4, 3))
+    forged_meta = '{"w":3,"h":5}'
+    tag = hmac.new(k_mac, build_mac_input(sid, "I", 1, "image", forged_meta, env.iv, env.ct), hashlib.sha256).digest()
+    forged = Envelope(sid, "I", 1, "image", forged_meta, env.iv, env.ct, tag)
+    with pytest.raises(EnvelopeError, match="bad_format"):
+        verify_and_decrypt(k_enc, k_mac, sid, "I", forged, 0)
+    changed_type = Envelope(sid, "I", 1, "text", env.meta_json, env.iv, env.ct, env.hmac)
+    with pytest.raises(EnvelopeError, match="hmac_mismatch"):
+        verify_and_decrypt(k_enc, k_mac, sid, "I", changed_type, 0)

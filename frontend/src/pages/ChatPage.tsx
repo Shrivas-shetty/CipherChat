@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "../chat/types";
+import { messageService } from "../chat/messageService";
 import type { HandshakeStatus, HandshakeTimings } from "../crypto/handshake";
+import { decodeImage, type DecodedImage } from "../image/decode";
+import { releaseObjectUrl, renderRgbPng } from "../image/render";
 
 export type { ChatMessage };
 
@@ -23,6 +26,7 @@ type Props = {
   terminationReason: string | null;
   onRequestSession: () => void;
   onSend: (text: string) => Promise<void> | void;
+  onSendImage: (file: File, prepared?: DecodedImage) => Promise<void>;
   onLogout: () => void;
   onReconnect: () => void;
 };
@@ -44,12 +48,56 @@ export function ChatPage({
   terminationReason,
   onRequestSession,
   onSend,
+  onSendImage,
   onLogout,
   onReconnect,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [preparedImage, setPreparedImage] = useState<DecodedImage | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [showNoise, setShowNoise] = useState<Record<string, boolean>>({});
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const preparedRef = useRef<DecodedImage | null>(null);
+
+  useEffect(() => () => {
+    preparedRef.current?.rgb.fill(0);
+    preparedRef.current = null;
+    messageService.reset();
+  }, []);
+
+  useEffect(() => {
+    if (sessionStatus === "terminated" || sessionStatus === "failed") {
+      preparedRef.current?.rgb.fill(0);
+      preparedRef.current = null;
+      setPreparedImage(null); setPreviewUrl(null); setSelectedImage(null);
+    }
+  }, [sessionStatus]);
+
+  function clearImagePreview() {
+    preparedRef.current?.rgb.fill(0);
+    preparedRef.current = null;
+    releaseObjectUrl(previewUrl ?? undefined);
+    setPreparedImage(null); setPreviewUrl(null); setSelectedImage(null); setImageError(null);
+  }
+
+  async function chooseImage(file: File | undefined) {
+    clearImagePreview();
+    if (!file) return;
+    setSelectedImage(file); setImageError(null);
+    try {
+      const decoded = await decodeImage(file);
+      preparedRef.current = decoded;
+      setPreparedImage(decoded);
+      setPreviewUrl(await renderRgbPng(decoded.rgb, decoded.w, decoded.h));
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "Could not decode this image.");
+    }
+  }
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -259,14 +307,21 @@ export function ChatPage({
                         )}
                       </div>
 
-                      {/* Decrypted or Tampered Text */}
-                      {m.status === "received_failed" ? (
+                      {m.image && !m.image.placeholder && m.image.url ? (
+                        <div className="image-message">
+                          <img className="chat-image" src={showNoise[m.id] ? m.image.noiseUrl : m.image.url} onClick={() => setLightbox(m.image?.url ?? null)} />
+                          <div>{m.image.w} × {m.image.h}</div>
+                          <button type="button" onClick={() => setShowNoise((v) => ({ ...v, [m.id]: !v[m.id] }))}>{showNoise[m.id] ? "Show decrypted image" : "Show encrypted view"}</button>
+                          {!isMine && <a href={m.image.url} download="cipherchat-image.png">Save PNG</a>}
+                        </div>
+                      ) : m.image?.placeholder ? <p className="tampered-text">[image could not be verified, not decrypted]</p> : (
+                      m.status === "received_failed" ? (
                         <p className="bubble-text tampered-text">
                           ⚠️ [message could not be verified, not decrypted]
                         </p>
                       ) : (
                         <p className="bubble-text">{m.text}</p>
-                      )}
+                      ))}
 
                       {/* Status Badge */}
                       <div className="bubble-footer">
@@ -300,6 +355,7 @@ export function ChatPage({
                             <div className="wire-header-label">
                               What the server and Wireshark see
                             </div>
+                            {m.image && <div className="wire-image-info">{m.image.w} × {m.image.h}, {m.image.plaintextBytes} plaintext bytes, {m.wire.ctLength} ciphertext bytes, {m.image.overheadBytes} bytes overhead<br/>Decode: {m.image.decodeMs ?? "—"} ms · Encrypt/verify: {m.image.cryptoMs ?? "—"} ms<br/>PIXEL HASH: {m.image.pixelHash || "unavailable"}</div>}
                             <div className="wire-table">
                               <div className="wire-row">
                                 <span className="wire-key">Counter:</span>
@@ -384,6 +440,8 @@ export function ChatPage({
             </div>
           )}
 
+          {imageError && <p className="msg err">{imageError}</p>}
+          {selectedImage && <div className="image-preview-strip">{previewUrl && <img width="96" height="72" src={previewUrl} alt="Processed image preview" />}<span>{preparedImage ? `${preparedImage.w} × ${preparedImage.h} · ${preparedImage.rgb.length} bytes` : selectedImage.name}</span><button type="button" onClick={clearImagePreview}>Cancel</button><button type="button" disabled={!isChatAllowed || isSending || !preparedImage} onClick={async () => { setIsSending(true); await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); try { await onSendImage(selectedImage, preparedImage ?? undefined); clearImagePreview(); } catch (err) { setSendError(err instanceof Error ? err.message : "Image send failed"); } finally { setIsSending(false); } }}>{isSending ? "Encrypting…" : "Send"}</button></div>}
           <form className="composer" onSubmit={handleSend}>
             <input
               className="text-input"
@@ -411,7 +469,10 @@ export function ChatPage({
             >
               {isSending ? "Sending…" : "Send"}
             </button>
+            <input ref={imageInput} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => { void chooseImage(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+            <button type="button" disabled={!isChatAllowed || isSending} onClick={() => imageInput.current?.click()}>Attach image</button>
           </form>
+          {lightbox && <div className="image-lightbox" onClick={() => setLightbox(null)}><button type="button" onClick={() => setLightbox(null)}>Close</button><img src={lightbox} /></div>}
         </>
       )}
     </div>
