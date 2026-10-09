@@ -126,6 +126,8 @@ export function AuthPage({ serverAddress, onServerAddressChange }: Props) {
           user: AuthUser;
           expires_at: string;
         }>("/api/auth/login", {
+          skipAuth: true,
+          skipUnauthorizedHandling: true,
           method: "POST",
           body: JSON.stringify({
             username: trimmedUser,
@@ -149,6 +151,8 @@ export function AuthPage({ serverAddress, onServerAddressChange }: Props) {
           user: AuthUser;
           expires_at: string;
         }>("/api/auth/login", {
+          skipAuth: true,
+          skipUnauthorizedHandling: true,
           method: "POST",
           body: JSON.stringify({
             username: trimmedUser,

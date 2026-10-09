@@ -32,12 +32,14 @@ export function setOnUnauthorized(listener: UnauthorizedListener | null): void {
 export type RequestOptions = RequestInit & {
   token?: string;
   skipAuth?: boolean;
+  skipUnauthorizedHandling?: boolean;
 };
 
 export async function requestJson<T>(
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
+  const { skipAuth, skipUnauthorizedHandling, ...fetchOptions } = options;
   const addr = loadServerAddress();
   const base = httpBase(addr);
   const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
@@ -47,7 +49,7 @@ export async function requestJson<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  if (!options.skipAuth && !headers.has("Authorization")) {
+  if (!skipAuth && !headers.has("Authorization")) {
     const session = loadSession();
     if (session?.token) {
       headers.set("Authorization", `Bearer ${session.token}`);
@@ -55,11 +57,11 @@ export async function requestJson<T>(
   }
 
   const res = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !skipUnauthorizedHandling) {
     clearSession();
     const sessionExpiredMsg = "Session expired, please log in again";
     unauthorizedListener?.(sessionExpiredMsg);
