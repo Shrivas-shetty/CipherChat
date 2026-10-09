@@ -8,7 +8,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 
-from app.config import ALLOW_PLAINTEXT_BASELINE, CORS_ORIGIN_REGEX
+from app import config
+from app.config import CORS_ORIGIN_REGEX
 from app.db.base import init_db
 from app.db.lab_base import init_lab_db
 from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, ws
@@ -21,7 +22,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    if ALLOW_PLAINTEXT_BASELINE:
+    if config.ALLOW_PLAINTEXT_BASELINE:
         logging.getLogger(__name__).warning("Plaintext baseline endpoints are ENABLED (benchmark use only)")
     init_db()
     init_lab_db()
@@ -63,6 +64,8 @@ def create_app() -> FastAPI:
 
     @application.middleware("http")
     async def limit_message_post_size(request, call_next):
+        if request.url.path.startswith("/api/baseline/") and not config.ALLOW_PLAINTEXT_BASELINE:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         if request.method == "POST" and request.url.path == "/api/baseline/messages":
             raw_length = request.headers.get("content-length", "")
             body = await request.body()

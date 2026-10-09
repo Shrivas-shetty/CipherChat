@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 
 from app.db.models import Message, User, to_iso_z
-from app.db.lab_models import ImageMetric, TextMetric
+from app.db.lab_models import BenchRun, BenchSample, ImageMetric, TextMetric
 from app.image import parse_image_meta
 
 
@@ -45,6 +45,47 @@ def clear_image_metrics(db: Session) -> int:
     deleted = db.query(ImageMetric).delete(synchronize_session=False)
     db.commit()
     return deleted
+
+
+def create_bench_run(db: Session, run_data: dict) -> BenchRun:
+    run = BenchRun(**{key: run_data[key] for key in ("label", "repeats", "warmup", "text_lengths", "image_sides", "handshake_ms", "note")})
+    db.add(run)
+    db.flush()
+    for sample in run_data["samples"]:
+        db.add(BenchSample(run_id=run.id, **sample))
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def list_bench_runs(db: Session, limit: int = 50) -> list[dict]:
+    limit = max(1, min(limit, 200))
+    runs = db.query(BenchRun).order_by(BenchRun.created_at.desc(), BenchRun.id.desc()).limit(limit).all()
+    return [{"id": run.id, "created_at": to_iso_z(run.created_at), "label": run.label,
+        "repeats": run.repeats, "warmup": run.warmup, "text_lengths": run.text_lengths,
+        "image_sides": run.image_sides, "handshake_ms": run.handshake_ms, "note": run.note,
+        "sample_count": db.query(BenchSample).filter(BenchSample.run_id == run.id).count()} for run in runs]
+
+
+def get_bench_run(db: Session, run_id: int) -> dict | None:
+    run = db.query(BenchRun).filter(BenchRun.id == run_id).first()
+    if run is None: return None
+    result = {"id": run.id, "created_at": to_iso_z(run.created_at), "label": run.label,
+        "repeats": run.repeats, "warmup": run.warmup, "text_lengths": run.text_lengths,
+        "image_sides": run.image_sides, "handshake_ms": run.handshake_ms, "note": run.note}
+    samples = db.query(BenchSample).filter(BenchSample.run_id == run_id).order_by(BenchSample.seq).all()
+    result["sample_count"] = len(samples)
+    result["samples"] = [{column.name: getattr(sample, column.name) for column in BenchSample.__table__.columns if column.name != "run_id"} for sample in samples]
+    return result
+
+
+def clear_bench_runs(db: Session) -> tuple[int, int]:
+    runs = db.query(BenchRun).count()
+    samples = db.query(BenchSample).count()
+    db.query(BenchSample).delete(synchronize_session=False)
+    db.query(BenchRun).delete(synchronize_session=False)
+    db.commit()
+    return runs, samples
 
 
 def list_image_metrics(db: Session, *, limit: int = 200, before_id: int | None = None):

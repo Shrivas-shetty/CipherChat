@@ -1,17 +1,16 @@
 import math
 import re
-from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr, Field, conlist
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr, Field
 from sqlalchemy.orm import Session
 
 from app.db.lab_base import get_lab_db
-from app.db.lab_models import BenchRun, BenchSample
-from app.db.models import User, to_iso_z
+from app.db.models import User
 from app.deps import require_role
 from app.services.audit import log_event
+from app.services.lab_queries import clear_bench_runs, create_bench_run, get_bench_run, list_bench_runs
 
 router = APIRouter(prefix="/api/dashboard/bench", tags=["benchmark"])
 analyst = Depends(require_role("analyst"))
@@ -59,59 +58,46 @@ class RunIn(BaseModel):
             max_size = 2000 if sample.kind == "text" else 512
             if sample.size_param > max_size or (sample.verify_post_ms is not None and (not math.isfinite(sample.verify_post_ms) or not 0 <= sample.verify_post_ms <= 600000)):
                 raise ValueError("invalid_sample")
-            if sample.mode == "plain" and sample.verify_post_ms is not None:
+            if (sample.mode == "plain" and sample.verify_post_ms is not None) or (sample.mode == "secure" and sample.verify_post_ms is None):
                 raise ValueError("invalid_sample")
         return self
 
 
 @router.post("/runs", status_code=201)
-def create_run(req: RunIn, lab: Session = Depends(get_lab_db), user: User = analyst):
+async def create_run(request: Request, lab: Session = Depends(get_lab_db), user: User = analyst):
+    try:
+        req = RunIn.model_validate_json(await request.body())
+    except Exception:
+        log_event("METRICS_REJECTED", severity="warning", user_id=user.id,
+                  details={"reason": "invalid_bench_run"})
+        raise HTTPException(400, {"code": "invalid_bench_run"})
     try:
         req.valid_charset()
     except ValueError as exc:
         log_event("METRICS_REJECTED", severity="warning", user_id=user.id, details={"reason": str(exc)})
         raise HTTPException(400, {"code": "invalid_bench_run"}) from exc
-    row = BenchRun(label=req.label, repeats=req.repeats, warmup=req.warmup,
-        text_lengths=req.text_lengths, image_sides=req.image_sides,
-        handshake_ms=req.handshake_ms, note=req.note)
-    lab.add(row); lab.flush()
-    for item in req.samples:
-        values = item.model_dump()
-        values["run_id"] = row.id
-        lab.add(BenchSample(**values))
-    lab.commit()
+    data = req.model_dump()
+    data["samples"] = [sample.model_dump() for sample in req.samples]
+    row = create_bench_run(lab, data)
     log_event("BENCH_RUN_RECORDED", severity="info", user_id=user.id,
               details={"run_id": row.id, "label": row.label, "samples": len(req.samples)})
     return {"id": row.id}
 
 
-def serialize_run(lab: Session, row: BenchRun):
-    return {"id": row.id, "created_at": to_iso_z(row.created_at), "label": row.label,
-        "repeats": row.repeats, "warmup": row.warmup, "text_lengths": row.text_lengths,
-        "image_sides": row.image_sides, "handshake_ms": row.handshake_ms, "note": row.note,
-        "sample_count": lab.query(BenchSample).filter(BenchSample.run_id == row.id).count()}
-
-
 @router.get("/runs")
 def runs(limit: int = Query(50, ge=1, le=200), lab: Session = Depends(get_lab_db), _: User = analyst):
-    rows = lab.query(BenchRun).order_by(BenchRun.created_at.desc(), BenchRun.id.desc()).limit(limit).all()
-    return {"items": [serialize_run(lab, row) for row in rows]}
+    return {"items": list_bench_runs(lab, limit)}
 
 
 @router.get("/runs/{run_id}")
 def run_detail(run_id: int, lab: Session = Depends(get_lab_db), _: User = analyst):
-    row = lab.query(BenchRun).filter(BenchRun.id == run_id).first()
-    if row is None: raise HTTPException(404, "Run not found")
-    result = serialize_run(lab, row)
-    result["samples"] = [{c.name: getattr(s, c.name) for c in BenchSample.__table__.columns if c.name != "run_id"} for s in lab.query(BenchSample).filter(BenchSample.run_id == run_id).order_by(BenchSample.seq).all()]
+    result = get_bench_run(lab, run_id)
+    if result is None: raise HTTPException(404, "Run not found")
     return result
 
 
 @router.delete("/runs")
 def clear_runs(lab: Session = Depends(get_lab_db), user: User = analyst):
-    count = lab.query(BenchRun).count()
-    lab.query(BenchSample).delete(synchronize_session=False)
-    lab.query(BenchRun).delete(synchronize_session=False)
-    lab.commit()
-    log_event("LAB_DATA_CLEARED", severity="warning", user_id=user.id, details={"table": "bench", "rows_deleted": count})
+    count, samples_count = clear_bench_runs(lab)
+    log_event("LAB_DATA_CLEARED", severity="warning", user_id=user.id, details={"table": "bench", "rows_deleted": count + samples_count})
     return {"deleted": count}

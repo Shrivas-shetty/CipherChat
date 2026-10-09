@@ -48,6 +48,8 @@ class BenchUser:
         response.raise_for_status(); self.token = response.json()["access_token"]
 
     async def connect_ws(self):
+        if self.keys_future.done():
+            self.keys_future = asyncio.get_running_loop().create_future()
         url = self.base_url.replace("https://", "wss://").replace("http://", "ws://") + "/ws"
         self.ws = await websockets.connect(url, max_size=2_000_000)
         await self.ws.send(json.dumps({"v": 1, "type": "auth", "token": self.token}))
@@ -76,12 +78,12 @@ class BenchUser:
         init_public = bytes.fromhex(pub_hex if role == "initiator" else peer["public"])
         resp_public = bytes.fromhex(peer["public"] if role == "initiator" else pub_hex)
         keys = derive_session_keys(shared_secret(peer_public, private), session_id, init_public, resp_public)
+        derive_ms = (time.perf_counter() - derive_start) * 1000
         tag = confirm_tag(keys.k_mac, session_id, role)
         await self.ws.send(json.dumps({"v": 1, "type": "key_confirm", "session_id": session_id, "tag": tag}))
         peer_confirm, _, _ = await self._wait("key_confirm", session_id)
         peer_role = "responder" if role == "initiator" else "initiator"
         if peer_confirm["tag"] != confirm_tag(keys.k_mac, session_id, peer_role): raise RuntimeError("key confirmation failed")
-        derive_ms = (time.perf_counter() - derive_start) * 1000
         fingerprint = fingerprint_str(keys.fingerprint_bytes)
         await self.ws.send(json.dumps({"v":1,"type":"key_verified","session_id":session_id,"fingerprint":fingerprint,"timings":{"keygen_ms":keygen_ms,"derive_ms":derive_ms}}))
         _, established_at, _ = await self._wait("session_established", session_id)

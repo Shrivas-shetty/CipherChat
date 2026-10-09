@@ -22,6 +22,7 @@ class BaselineStore:
         self._next_id = 1
         self._audited_sessions: set[str] = set()
         self._lock = threading.RLock()
+        self._clock = time.monotonic
 
     def _expire(self, now: float, ttl: float):
         for key, item in list(self._items.items()):
@@ -30,7 +31,7 @@ class BaselineStore:
 
     def add(self, session_id: str, recipient_id: int, kind: str, value: dict, size: int,
             ttl: float, max_items: int, max_bytes: int) -> tuple[int, bool]:
-        now = time.monotonic()
+        now = self._clock()
         with self._lock:
             self._expire(now, ttl)
             item_id = self._next_id
@@ -44,12 +45,12 @@ class BaselineStore:
 
     def get(self, item_id: int, ttl: float) -> Item | None:
         with self._lock:
-            self._expire(time.monotonic(), ttl)
+            self._expire(self._clock(), ttl)
             return self._items.get(item_id)
 
     def consume(self, item_id: int, ttl: float) -> Item | None:
         with self._lock:
-            self._expire(time.monotonic(), ttl)
+            self._expire(self._clock(), ttl)
             return self._items.pop(item_id, None)
 
 

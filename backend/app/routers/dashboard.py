@@ -8,10 +8,9 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.db.lab_base import get_lab_db
 from app.db.models import User
-from app.db.models import AuditLog, to_iso_z
 from app.deps import require_role
 from app.services.audit import log_event, verify_chain_detailed
-from app.services.dashboard_queries import event_types, query_logs, query_messages, query_sessions, query_summary
+from app.services.dashboard_queries import event_types, query_logs, query_messages, query_perf_handshakes, query_sessions, query_summary
 from app.services.lab_queries import clear_image_metrics, clear_text_metrics, get_cipher_noise_message, query_image_records, query_text_records
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -124,15 +123,4 @@ def audit_integrity(db: Session = Depends(get_db), _: User = analyst):
 
 @router.get("/perf/handshakes")
 def perf_handshakes(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db), _: User = analyst):
-    rows = db.query(AuditLog).filter(AuditLog.event_type == "KEY_EXCHANGE_OK").order_by(AuditLog.id.desc()).limit(limit).all()
-    items = []
-    for row in rows:
-        details = row.details or {}
-        initiator = details.get("timings_initiator") or {}
-        responder = details.get("timings_responder") or {}
-        items.append({"id": row.id, "ts": to_iso_z(row.ts), "session_id": row.session_id,
-            "handshake_ms": details.get("duration_ms"), "initiator": details.get("initiator"),
-            "responder": details.get("responder"), "initiator_keygen_ms": initiator.get("keygen_ms"),
-            "initiator_derive_ms": initiator.get("derive_ms"), "responder_keygen_ms": responder.get("keygen_ms"),
-            "responder_derive_ms": responder.get("derive_ms")})
-    return {"items": items}
+    return {"items": query_perf_handshakes(db, limit=limit)}

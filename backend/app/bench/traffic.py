@@ -24,7 +24,9 @@ async def run(args):
                 sender,receiver=(a,b) if i%2==0 else (b,a); sk,rk=(ka,kb) if sender is a else (kb,ka)
                 await _one_sample(sender,receiver,sk,rk,"image",side,args.mode,i); await asyncio.sleep(args.pause_ms/1000)
         ended=datetime.now(timezone.utc); wall_end=datetime.now().astimezone().isoformat()
-        data={"mode":args.mode,"marker":args.marker,"messages":args.messages,"with_images":args.with_images,"server":args.server,"started_at_utc":start.isoformat().replace("+00:00","Z"),"ended_at_utc":ended.isoformat().replace("+00:00","Z"),"local_start":wall_start,"local_end":wall_end,"client_host_ip_if_known":socket.gethostbyname(socket.gethostname()),"pause_ms":args.pause_ms}
+        try: client_ip=socket.gethostbyname(socket.gethostname())
+        except OSError: client_ip=None
+        data={"mode":args.mode,"marker":args.marker,"messages":args.messages,"with_images":args.with_images,"server":args.server,"started_at_utc":start.isoformat().replace("+00:00","Z"),"ended_at_utc":ended.isoformat().replace("+00:00","Z"),"local_start":wall_start,"local_end":wall_end,"client_host_ip_if_known":client_ip,"pause_ms":args.pause_ms}
         out=Path(__file__).resolve().parents[2]/"data"/"bench"; out.mkdir(parents=True,exist_ok=True); path=out/f"traffic_{args.mode}_{args.label}_{ended.strftime('%Y%m%dT%H%M%SZ')}.json"; path.write_text(json.dumps(data,indent=2),encoding="utf-8"); print(path)
     finally: await asyncio.gather(a.logout(),b.logout(),return_exceptions=True)
 

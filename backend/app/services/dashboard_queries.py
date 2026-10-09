@@ -221,3 +221,23 @@ def query_summary(db: Session, lab_db: Optional[Session] = None) -> dict[str, An
             "bench_runs": (lab_db.query(func.count(BenchRun.id)).scalar() or 0) if lab_db is not None else 0,
         },
     }
+
+
+def query_perf_handshakes(db: Session, *, limit: int = 200) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 1000))
+    rows = db.query(AuditLog).filter(AuditLog.event_type == "KEY_EXCHANGE_OK").order_by(AuditLog.id.desc()).limit(limit).all()
+    items = []
+    for row in rows:
+        details = row.details or {}
+        initiator_timings = details.get("timings_initiator") or {}
+        responder_timings = details.get("timings_responder") or {}
+        session = db.query(ChatSession).filter(ChatSession.id == row.session_id).first() if row.session_id else None
+        items.append({"id": row.id, "ts": to_iso_z(row.ts), "session_id": row.session_id,
+            "handshake_ms": details.get("duration_ms"),
+            "initiator": session.user_a.username if session else details.get("initiator"),
+            "responder": session.user_b.username if session else details.get("responder"),
+            "initiator_keygen_ms": initiator_timings.get("keygen_ms"),
+            "initiator_derive_ms": initiator_timings.get("derive_ms"),
+            "responder_keygen_ms": responder_timings.get("keygen_ms"),
+            "responder_derive_ms": responder_timings.get("derive_ms")})
+    return items
