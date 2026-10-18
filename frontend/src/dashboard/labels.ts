@@ -1,4 +1,4 @@
-export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "demo", "lab"] as const;
+export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "demo", "network"] as const;
 
 export function eventLabel(eventType: string, details?: Record<string, unknown> | null): string {
   switch (eventType) {
@@ -21,6 +21,10 @@ export function eventLabel(eventType: string, details?: Record<string, unknown> 
     case "BENCH_RUN_RECORDED": return "Benchmark run recorded";
     case "BASELINE_PLAINTEXT_USED": return "PLAINTEXT baseline traffic used (benchmark)";
     case "LAB_DATA_CLEARED": return details?.table === "image_metrics" ? "Lab data cleared (image metrics)" : details?.table === "text_metrics" ? "Lab data cleared (text metrics)" : "Lab data cleared";
+    case "NETWORK_INGEST_STARTED": return "Capture ingestion started";
+    case "NETWORK_INGEST_DONE": return "Capture ingestion completed";
+    case "NETWORK_INGEST_FAILED": return "Capture ingestion FAILED";
+    case "NETWORK_CAPTURE_DELETED": return "Capture data deleted";
     default: return eventType.toLowerCase().split("_").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   }
 }

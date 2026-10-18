@@ -12,7 +12,10 @@ from app import config
 from app.config import CORS_ORIGIN_REGEX
 from app.db.base import init_db
 from app.db.lab_base import init_lab_db
-from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, ws
+from app.db.network_base import init_network_db, NetworkSessionLocal
+from app.db.network_models import PcapFile
+from sqlalchemy import update
+from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, network, ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +29,11 @@ async def lifespan(application: FastAPI):
         logging.getLogger(__name__).warning("Plaintext baseline endpoints are ENABLED (benchmark use only)")
     init_db()
     init_lab_db()
+    config.get_pcap_dir()
+    init_network_db()
+    with NetworkSessionLocal() as network_db:
+        network_db.execute(update(PcapFile).where(PcapFile.status.in_(("queued", "running"))).values(status="failed", error="server_restart"))
+        network_db.commit()
     from app.db import base
     from app.db.models import ChatSession, utc_now
 
@@ -94,6 +102,7 @@ def create_app() -> FastAPI:
     application.include_router(admin.router)
     application.include_router(dashboard.router)
     application.include_router(bench.router)
+    application.include_router(network.router)
     application.include_router(lab.router)
     application.include_router(ws.router)
 

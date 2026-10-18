@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.db.models import AuditLog, ChatSession, Message, User, to_iso_z, utc_now
 from app.db.lab_models import BenchRun, ImageMetric, TextMetric
+from app.db.network_models import PcapFile
 from app.image import ImageFormatError, parse_image_meta
 from app.ws.manager import manager
 
@@ -16,6 +17,7 @@ EVENT_CATEGORIES: dict[str, list[str]] = {
     "message": ["MESSAGE_SENT", "MESSAGE_REJECTED", "MESSAGE_VERIFIED", "TAMPER_DETECTED"],
     "demo": ["TAMPER_ARMED", "TAMPER_DISARMED", "TAMPER_APPLIED", "BASELINE_PLAINTEXT_USED"],
     "lab": ["METRICS_REJECTED", "LAB_DATA_CLEARED", "BENCH_RUN_RECORDED"],
+    "network": ["NETWORK_INGEST_STARTED", "NETWORK_INGEST_DONE", "NETWORK_INGEST_FAILED", "NETWORK_CAPTURE_DELETED"],
 }
 SEVERITIES = ["info", "warning", "alert"]
 _ALL_CATEGORIZED = {event for events in EVENT_CATEGORIES.values() for event in events}
@@ -185,7 +187,7 @@ def query_sessions(db: Session, *, limit: int = 50) -> list[dict[str, Any]]:
     return items
 
 
-def query_summary(db: Session, lab_db: Optional[Session] = None) -> dict[str, Any]:
+def query_summary(db: Session, lab_db: Optional[Session] = None, network_db: Optional[Session] = None) -> dict[str, Any]:
     now = utc_now()
     total_users = db.query(func.count(User.id)).scalar() or 0
     analysts = db.query(func.count(User.id)).filter(User.role == "analyst").scalar() or 0
@@ -220,6 +222,7 @@ def query_summary(db: Session, lab_db: Optional[Session] = None) -> dict[str, An
             "image_records": (lab_db.query(func.count(ImageMetric.id)).scalar() or 0) if lab_db is not None else 0,
             "bench_runs": (lab_db.query(func.count(BenchRun.id)).scalar() or 0) if lab_db is not None else 0,
         },
+        "network": {"captures": (network_db.query(func.count(PcapFile.id)).scalar() or 0) if network_db is not None else 0},
     }
 
 

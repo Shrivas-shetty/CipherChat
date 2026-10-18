@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.db.lab_base import get_lab_db
+from app.db.network_base import get_network_db
 from app.db.models import User
 from app.deps import require_role
 from app.services.audit import log_event, verify_chain_detailed
@@ -63,8 +64,8 @@ def sessions(limit: int = Query(50, ge=1), db: Session = Depends(get_db), _: Use
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), lab_db: Session = Depends(get_lab_db), _: User = analyst):
-    return query_summary(db, lab_db)
+def summary(db: Session = Depends(get_db), lab_db: Session = Depends(get_lab_db), network_db: Session = Depends(get_network_db), _: User = analyst):
+    return query_summary(db, lab_db, network_db)
 
 
 @router.get("/lab/text/records")

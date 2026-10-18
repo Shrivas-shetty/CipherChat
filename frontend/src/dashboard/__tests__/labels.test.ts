@@ -15,6 +15,10 @@ describe("dashboard labels", () => {
       ["ODD_EVENT_NAME", "Odd Event Name"],
       ["METRICS_REJECTED", "Metrics rejected (invalid data)"],
       ["LAB_DATA_CLEARED", "Lab data cleared"],
+      ["NETWORK_INGEST_STARTED", "Capture ingestion started"],
+      ["NETWORK_INGEST_DONE", "Capture ingestion completed"],
+      ["NETWORK_INGEST_FAILED", "Capture ingestion FAILED"],
+      ["NETWORK_CAPTURE_DELETED", "Capture data deleted"],
     ];
     for (const [type, expected, details] of cases) expect(eventLabel(type, details)).toBe(expected);
     expect(eventLabel("LAB_DATA_CLEARED", { table: "image_metrics" })).toBe("Lab data cleared (image metrics)");
@@ -29,6 +33,7 @@ describe("dashboard labels", () => {
   });
   it("keeps category values unique", () => {
     expect(new Set(DASHBOARD_CATEGORIES).size).toBe(DASHBOARD_CATEGORIES.length);
-    expect(DASHBOARD_CATEGORIES).toContain("lab");
+    expect(DASHBOARD_CATEGORIES).not.toContain("lab");
+    expect(DASHBOARD_CATEGORIES).toContain("network");
   });
 });

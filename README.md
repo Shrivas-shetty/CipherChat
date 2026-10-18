@@ -326,6 +326,29 @@ The baseline re-encryption must exactly match the sent ciphertext or the job abo
 
 The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as horizontal correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
 
+## Network analysis (Wireshark / PCAP / PyShark) — Phase 10
+
+Network analysis ingests PCAP/PCAPNG files in a separate `python -m app.network.ingest` subprocess and writes packet metadata to the third SQLite database, `backend/data/network.db` (WAL), separate from `app.db` and `lab.db`. The worker never opens the application database or audit log: the API process records `NETWORK_INGEST_STARTED`, then its watcher records `NETWORK_INGEST_DONE` or `NETWORK_INGEST_FAILED` after the worker exits. Stored data is limited to addresses, ports, protocols, lengths, timestamps, flags, normalized HTTP paths, status/content-length values, and derived counts. Payload bytes, request/response bodies, header values, tokens, and passwords are never stored. A sanitized short snippet is stored only when the optional marker is detected. PCAP files can contain credentials and tokens in cleartext; never share or commit them.
+
+Prerequisites: install Wireshark with `tshark`; install backend dependencies with `pip install -r backend/requirements.txt`. On Windows, set `TSHARK_PATH` to the full `tshark.exe` path when it is not on `PATH`, then restart the server. PyShark is imported only by the adapter, so missing Wireshark disables ingestion while other dashboard features continue to work.
+
+Start Wireshark on Laptop A's Wi-Fi/Ethernet adapter with capture filter `tcp port 8000`. Run clients from Laptop B so traffic crosses the network. Capture one scenario per file, stop capture, and save `.pcap`/`.pcapng` under `backend/data/pcaps/`, for example `secure_traffic.pcapng`, `plain_baseline.pcapng`, or `login_attempt.pcapng`. The Phase 9 traffic commands (from `backend`) are:
+
+```powershell
+python -m app.bench.traffic --server http://LAPTOP-A-IP:8000 --mode secure --marker SECRETWORD123 --messages 20
+python -m app.bench.traffic --server http://LAPTOP-A-IP:8000 --mode plain --marker SECRETWORD123 --messages 20
+```
+
+Plain mode requires `ALLOW_PLAINTEXT_BASELINE=true` on the server. Select the matching `traffic_*.json` sidecar when ingesting secure/plain traffic. Ingest from analyst **Network > Captures** or run `python -m app.network.ingest <filename> --label L --scenario secure_traffic|plain_baseline|login_attempt|browser_session|tamper_demo|other [--marker M] [--sidecar traffic_name.json] [--server-port 8000] [--replace]`. Filenames are resolved only inside the PCAP directory.
+
+The tabs show capture status, protocol/size/conversation summaries, packet timelines, paginated packets and HTTP transactions, exposure findings, and a two-capture comparison. Exposure counts show whether a supplied marker, JWT-shaped value, or password field appeared in captured traffic; actual secret values are not saved. A visible marker is expected in `plain_baseline`, a failure in `secure_traffic`, and visible credentials are expected in `login_attempt`. Compare uses sidecar message counts where available; packet totals include login, handshake, and WebSocket traffic.
+
+Limitations: PCAPs may contain real credentials/tokens; keep them private and never commit them. Marker scanning detects the byte string in captured TCP payload and is intended for plain HTTP, not TLS. Capture totals include other traffic on the filtered port. Laptop clock differences do not affect within-file durations or totals. PyShark field names vary by Wireshark release, and real capture compatibility depends on the installed version.
+
+### Phase 10 tests and acceptance checks
+
+Run backend tests from the repository root with `.venv\Scripts\python.exe -m pytest backend/app/tests backend/tests -v`, and frontend tests/build with `cd frontend; npm test; npm run build`. The real-PCAP integration test skips with a clear reason when `tshark` is unavailable or `CC_SKIP_INTEGRATION=1` is set. Acceptance checks: pytest and Vitest pass; tshark status enables/disables ingestion correctly without disabling other features; separate secure/plain/login captures ingest and match Wireshark frame counts; marker and credential indicators appear in the expected scenarios while secret values stay out of `network.db`; HTTP classes and comparison deltas/verdict are sensible; Overview, Traffic, filtering and pagination work; duplicate ingestion requires Replace; deleting analysis rows leaves PCAP files; unsafe filenames are rejected and non-analysts receive 403; ingestion audit events preserve the audit chain; and earlier chat, handshake, encryption, tamper, Labs, and Performance acceptance checks continue to pass.
+
 ### Phase 8 tests
 
 ```powershell

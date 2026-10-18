@@ -16,6 +16,13 @@ PROTOCOL_VERSION = 1
 # Database and Authentication settings
 DB_PATH = os.getenv("DB_PATH", "data/app.db")
 LAB_DB_PATH = os.getenv("LAB_DB_PATH", "data/lab.db")
+NETWORK_DB_PATH = os.getenv("NETWORK_DB_PATH", "data/network.db")
+PCAP_DIR = os.getenv("PCAP_DIR", "data/pcaps")
+BENCH_DIR = os.getenv("BENCH_DIR", "data/bench")
+TSHARK_PATH = os.getenv("TSHARK_PATH") or None
+MAX_PCAP_MB = int(os.getenv("MAX_PCAP_MB", "200"))
+MAX_PACKETS_PER_FILE = int(os.getenv("MAX_PACKETS_PER_FILE", "300000"))
+INGEST_TIMEOUT_SECONDS = int(os.getenv("INGEST_TIMEOUT_SECONDS", "900"))
 LAB_POSTS_PER_MINUTE = int(os.getenv("LAB_POSTS_PER_MINUTE", 30))
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 8))
 LOGIN_MAX_FAILS = int(os.getenv("LOGIN_MAX_FAILS", 5))
@@ -68,6 +75,27 @@ def get_lab_db_file_path() -> Path:
         p = BASE_DIR / p
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _get_data_path(value: str) -> Path:
+    p = Path(value)
+    return p if p.is_absolute() else BASE_DIR / p
+
+
+def get_network_db_file_path() -> Path:
+    p = _get_data_path(NETWORK_DB_PATH)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_pcap_dir() -> Path:
+    p = _get_data_path(PCAP_DIR)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_bench_dir() -> Path:
+    return _get_data_path(BENCH_DIR)
 
 
 # localhost + RFC1918 private ranges, any port

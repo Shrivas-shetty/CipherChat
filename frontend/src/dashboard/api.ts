@@ -1,12 +1,13 @@
 import { requestJson } from "../api/http";
+import type { CaptureDetail, CaptureSummary, HttpRow, NetworkStatus, PacketRow, PcapFileItem, Scenario, SidecarItem, Timeline } from "./network/types";
 
-export type DashboardCategory = "auth" | "session" | "message" | "demo" | "lab" | "other";
+export type DashboardCategory = "auth" | "session" | "message" | "demo" | "lab" | "network" | "other";
 export type AuditEvent = { id: number; ts: string; event_type: string; severity: "info" | "warning" | "alert"; user_id: number | null; username: string | null; success: boolean; ip: string | null; session_id: string | null; details: Record<string, unknown> | null; prev_hash: string; row_hash: string };
 export type Page<T> = { items: T[]; has_more_older: boolean; latest_id: number | null };
 export type DashboardMessage = { id: number; session_id: string; sender: string; recipient: string; sender_role: string; msg_type: "text" | "image"; counter: number; size_bytes: number; w: number | null; h: number | null; created_at: string; delivered_at: string | null; verification_status: "pending" | "verified" | "failed"; verification_reason: string | null; verified_at: string | null };
 export type DashboardSession = { id: string; initiator: string; responder: string; status: string; started_at: string; established_at: string | null; ended_at: string | null; end_reason: string | null; duration_seconds: number; handshake_ms: number | null; fingerprint: string | null; message_count: number; failed_verification_count: number };
-export type DashboardSummary = { server_time: string; users: { total: number; analysts: number; online: string[] }; active_session: null | { id: string; initiator: string; responder: string; status: string; started_at: string; established_at: string | null; fingerprint: string | null }; sessions: { total: number; established_ever: number; terminated: number; active: number }; messages: { total: number; text: number; image: number; verified: number; failed: number; pending: number }; security: { failed_logins_total: number; failed_logins_24h: number; lockouts_total: number; tamper_detected_total: number; token_rejections_total: number; room_full_total: number }; audit: { rows: number; last_id: number | null }; lab: { text_records: number; image_records: number; bench_runs: number } };
-export type AuditTypes = { categories: Record<"auth" | "session" | "message" | "demo" | "lab", string[]>; severities: string[] };
+export type DashboardSummary = { server_time: string; users: { total: number; analysts: number; online: string[] }; active_session: null | { id: string; initiator: string; responder: string; status: string; started_at: string; established_at: string | null; fingerprint: string | null }; sessions: { total: number; established_ever: number; terminated: number; active: number }; messages: { total: number; text: number; image: number; verified: number; failed: number; pending: number }; security: { failed_logins_total: number; failed_logins_24h: number; lockouts_total: number; tamper_detected_total: number; token_rejections_total: number; room_full_total: number }; audit: { rows: number; last_id: number | null }; lab: { text_records: number; image_records: number; bench_runs: number }; network: { captures: number } };
+export type AuditTypes = { categories: Record<"auth" | "session" | "message" | "demo" | "lab" | "network", string[]>; severities: string[] };
 export type TextLabRecord = { id: number; message_id: number; session_id: string; sender: string | null; message_created_at: string | null; pt_len_bytes: number; ct_len_bytes: number; total_ct_bits: number; key_trials: number; confusion_pct: number; key_flip_pcts: number[]; pt_trials: number; diffusion_bits: number; avalanche_pct: number; block_avalanche_pct: number; pt_flip_bit_idx: number[]; pt_flip_changed_bits: number[]; pt_flip_block_changed_bits: number[]; enc_us: number; dec_us: number; timing_iters: number; created_at: string };
 export type TextLabPage = { total: number; items: TextLabRecord[]; has_more_older: boolean; latest_id: number | null };
 export type ImageLabRecord = {
@@ -32,6 +33,15 @@ function query(params: Record<string, string | number | boolean | null | undefin
 }
 
 export const dashboardApi = {
+  networkStatus: (signal?: AbortSignal) => requestJson<NetworkStatus>("/api/dashboard/network/status", {signal}),
+  networkFiles: (signal?: AbortSignal) => requestJson<{pcaps:PcapFileItem[];sidecars:SidecarItem[]}>("/api/dashboard/network/files", {signal}),
+  ingestPcap: (body:{filename:string;label:string;scenario:Scenario;marker?:string;sidecar?:string;server_port?:number;replace?:boolean}) => requestJson<{id:number}>("/api/dashboard/network/ingest",{method:"POST",body:JSON.stringify(body)}),
+  captures: (limit=50,signal?:AbortSignal) => requestJson<{items:CaptureSummary[]}>(`/api/dashboard/network/captures?limit=${limit}`,{signal}),
+  capture: (id:number,signal?:AbortSignal) => requestJson<CaptureDetail>(`/api/dashboard/network/captures/${id}`,{signal}),
+  timeline: (id:number,bucket?:number,signal?:AbortSignal) => requestJson<Timeline>(`/api/dashboard/network/captures/${id}/timeline${bucket?`?bucket_ms=${bucket}`:""}`,{signal}),
+  packets: (id:number,params:Record<string,string|number|undefined>,signal?:AbortSignal) => requestJson<{items:PacketRow[];next_after_frame:number|null}>(`/api/dashboard/network/captures/${id}/packets?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined).map(([k,v])=>[k,String(v)]))}`,{signal}),
+  httpTransactions: (id:number,params:Record<string,string|number|undefined>,signal?:AbortSignal) => requestJson<{items:HttpRow[];next_after_frame:number|null}>(`/api/dashboard/network/captures/${id}/http?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!==undefined).map(([k,v])=>[k,String(v)]))}`,{signal}),
+  deleteCapture: (id:number) => requestJson<void>(`/api/dashboard/network/captures/${id}`,{method:"DELETE"}),
   logs: (params: Record<string, string | number | boolean | null | undefined>, signal?: AbortSignal) => requestJson<Page<AuditEvent>>(`/api/dashboard/logs${query(params)}`, { signal }),
   logTypes: (signal?: AbortSignal) => requestJson<AuditTypes>("/api/dashboard/logs/types", { signal }),
   messages: (params: Record<string, string | number | boolean | null | undefined>, signal?: AbortSignal) => requestJson<Page<DashboardMessage>>(`/api/dashboard/messages${query(params)}`, { signal }),

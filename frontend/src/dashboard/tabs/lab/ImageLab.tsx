@@ -41,8 +41,8 @@ function CorrelationTable({ records }: { records: ImageLabRecord[] }) {
 }
 
 function MseTable({ records }: { records: ImageLabRecord[] }) {
-  return <section className="dash-panel"><h3>MSE / PSNR</h3><p className="dash-note">PSNR is infinite when MSE is 0.</p><div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th>Message id</th><th>Dimensions</th><th>MSE (original vs decrypted)</th><th>PSNR (original vs decrypted)</th><th>MSE (original vs encrypted)</th><th>PSNR (original vs encrypted)</th><th>Status</th></tr></thead><tbody>
-    {records.map((r) => <tr className={r.mse_dec !== 0 ? "image-lossy-row" : ""} key={r.id}><td>{r.message_id}</td><td>{r.width} × {r.height}</td><td>{r.mse_dec.toFixed(4)}</td><td>{r.psnr_dec === null ? "∞ (identical)" : `${r.psnr_dec.toFixed(2)} dB`}</td><td>{r.mse_enc.toFixed(4)}</td><td>{r.psnr_enc === null ? "∞" : `${r.psnr_enc.toFixed(2)} dB`}</td><td>{r.mse_dec !== 0 && <b>Decryption not lossless</b>}</td></tr>)}
+  return <section className="dash-panel"><h3>MSE / PSNR</h3><p className="dash-note">PSNR is infinite when MSE is 0.</p><div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th>Message id</th><th>Dimensions</th><th>MSE (original vs decrypted)</th><th>PSNR (original vs decrypted)</th><th>MSE (original vs encrypted)</th><th>PSNR (original vs encrypted)</th></tr></thead><tbody>
+    {records.map((r) => <tr className={r.mse_dec !== 0 ? "image-lossy-row" : ""} key={r.id}><td>{r.message_id}</td><td>{r.width} × {r.height}</td><td>{r.mse_dec.toFixed(4)}</td><td>{r.psnr_dec === null ? "∞ (identical)" : `${r.psnr_dec.toFixed(2)} dB`}</td><td>{r.mse_enc.toFixed(4)}</td><td>{r.psnr_enc === null ? "∞" : `${r.psnr_enc.toFixed(2)} dB`}</td></tr>)}
   </tbody></table></div></section>;
 }
 
