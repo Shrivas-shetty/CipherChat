@@ -1,0 +1,12 @@
+export const DEFAULT_PERF_COUNTS = [20, 100000, 200000] as const;
+export const PERF_TRIALS_DEFAULT = 5;
+export const PERF_COUNT_MAX = 2_000_000;
+export const ATTACK_MAX_ATTEMPTS_CAP = 5_000_000;
+export const DEFAULT_MAX_ATTEMPTS_FULL = 100_000;
+export const DEFAULT_MAX_ATTEMPTS_DEMO = 500_000;
+export const DEFAULT_MAX_SECONDS = 30;
+export const MAX_SECONDS_CAP = 120;
+export const TRIALS_MAX = 20;
+export const DEMO_BITS = 16;
+export const FULL_BITS = 256;
+export const SLICE_MS = 16;

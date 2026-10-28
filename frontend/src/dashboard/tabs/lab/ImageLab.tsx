@@ -7,6 +7,7 @@ import { formatTs } from "../../labels";
 import { ScatterWithRegression } from "./ScatterWithRegression";
 import { ImageRecordsTable } from "./ImageRecordsTable";
 import { ImageSummaryCards } from "./ImageSummaryCards";
+import { correlationAverages, directionFields, prePhaseRecords, type CorrelationDirection } from "./correlationView";
 
 type Snapshot = { total: number; records: ImageLabRecord[]; updatedAt: string };
 const PAGE_CAP = 5000;
@@ -21,7 +22,6 @@ async function fetchAll(signal: AbortSignal): Promise<Snapshot> {
   }
   return { total, records: records.slice(0, PAGE_CAP), updatedAt: new Date().toISOString() };
 }
-const numberMean = (values: (number | null)[]) => { const present = values.filter((x): x is number => x !== null); return present.length ? mean(present) : null; };
 const pts = (records: ImageLabRecord[], value: (row: ImageLabRecord) => number) => records.map((row) => ({ x: row.n_pixels, y: value(row), messageId: row.message_id }));
 const fixed = (value: number | null) => value === null ? "n/a" : value.toFixed(4);
 
@@ -32,23 +32,33 @@ function EntropyTable({ records }: { records: ImageLabRecord[] }) {
   </tbody></table></div></section>;
 }
 
-function CorrelationTable({ records }: { records: ImageLabRecord[] }) {
-  const cols: (keyof ImageLabRecord)[] = ["corr_pt_r", "corr_pt_g", "corr_pt_b", "corr_pt_avg", "corr_ct_r", "corr_ct_g", "corr_ct_b", "corr_ct_avg"];
-  return <section className="dash-panel"><h3>Horizontal pixel correlation</h3><p className="dash-note">Computed over all horizontally adjacent pixel pairs in the sender's browser.</p><div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th rowSpan={2}>Message id</th><th rowSpan={2}>Dimensions</th><th colSpan={4}>Plaintext r</th><th colSpan={4}>Cipher r</th></tr><tr>{["R", "G", "B", "Avg", "R", "G", "B", "Avg"].map((x, i) => <th key={`${x}${i}`}>{x}</th>)}</tr></thead><tbody>
+function CorrelationTable({ records, direction }: { records: ImageLabRecord[]; direction: CorrelationDirection }) {
+  const cols = directionFields(direction);
+  const averages = correlationAverages(records, direction);
+  const title = direction === "h" ? "Horizontal" : direction === "v" ? "Vertical" : "Diagonal";
+  const explanation = direction === "h" ? "Pairs are adjacent pixels in each row: (r,k) with (r,k+1)."
+    : direction === "v" ? "Pairs are adjacent pixels in each column: (r,k) with (r+1,k)."
+      : "Pairs are down-right diagonal pixels: (r,k) with (r+1,k+1).";
+  const oldCount = direction === "h" ? 0 : prePhaseRecords(records, direction);
+  return <section className="dash-panel"><h3>{title} pixel correlation</h3><p className="dash-note">{explanation} Pearson r uses every valid pair per RGB channel.</p>
+    {oldCount > 0 && <div className="hash-warning">{oldCount} records were captured before {direction === "v" ? "vertical" : "diagonal"} analysis existed (shown as n/a). Clear the Image Lab data and send images again to fill them.</div>}
+    <div className="dash-cards image-lab-cards"><div><small>Mean plaintext r</small><b>{fixed(averages[3])}</b></div><div><small>Mean cipher r</small><b>{fixed(averages[7])}</b></div></div>
+    <div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th rowSpan={2}>Message id</th><th rowSpan={2}>Dimensions</th><th colSpan={4}>Plaintext r</th><th colSpan={4}>Cipher r</th></tr><tr>{["R", "G", "B", "Avg", "R", "G", "B", "Avg"].map((x, i) => <th key={`${x}${i}`}>{x}</th>)}</tr></thead><tbody>
     {records.map((r) => <tr key={r.id}><td>{r.message_id}</td><td>{r.width} × {r.height}</td>{cols.map((k) => <td key={k}>{fixed(r[k] as number | null)}</td>)}</tr>)}
-    <tr className="image-average-row"><th colSpan={2}>Average</th>{cols.map((k) => <td key={k}>{fixed(numberMean(records.map((r) => r[k] as number | null)))}</td>)}</tr>
+    <tr className="image-average-row"><th colSpan={2}>Average</th>{averages.map((value, i) => <td key={i}>{fixed(value)}</td>)}</tr>
   </tbody></table></div></section>;
 }
 
 function MseTable({ records }: { records: ImageLabRecord[] }) {
-  return <section className="dash-panel"><h3>MSE / PSNR</h3><p className="dash-note">PSNR is infinite when MSE is 0.</p><div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th>Message id</th><th>Dimensions</th><th>MSE (original vs decrypted)</th><th>PSNR (original vs decrypted)</th><th>MSE (original vs encrypted)</th><th>PSNR (original vs encrypted)</th><th>Status</th></tr></thead><tbody>
-    {records.map((r) => <tr className={r.mse_dec !== 0 ? "image-lossy-row" : ""} key={r.id}><td>{r.message_id}</td><td>{r.width} × {r.height}</td><td>{r.mse_dec.toFixed(4)}</td><td>{r.psnr_dec === null ? "∞ (identical)" : `${r.psnr_dec.toFixed(2)} dB`}</td><td>{r.mse_enc.toFixed(4)}</td><td>{r.psnr_enc === null ? "∞" : `${r.psnr_enc.toFixed(2)} dB`}</td><td>{r.mse_dec !== 0 && <b>Decryption not lossless</b>}</td></tr>)}
+  return <section className="dash-panel"><h3>MSE / PSNR</h3><p className="dash-note">PSNR is infinite when MSE is 0.</p><div className="dash-table-wrap"><table className="dash-table image-analysis-table"><thead><tr><th>Message id</th><th>Dimensions</th><th>MSE (original vs decrypted)</th><th>PSNR (original vs decrypted)</th><th>MSE (original vs encrypted)</th><th>PSNR (original vs encrypted)</th></tr></thead><tbody>
+    {records.map((r) => <tr className={r.mse_dec !== 0 ? "image-lossy-row" : ""} key={r.id}><td>{r.message_id}</td><td>{r.width} × {r.height}</td><td>{r.mse_dec.toFixed(4)}</td><td>{r.psnr_dec === null ? "∞ (identical)" : `${r.psnr_dec.toFixed(2)} dB`}</td><td>{r.mse_enc.toFixed(4)}</td><td>{r.psnr_enc === null ? "∞" : `${r.psnr_enc.toFixed(2)} dB`}</td></tr>)}
   </tbody></table></div></section>;
 }
 
 export function ImageLab() {
   const [section, setSection] = useState<"overview" | "images" | "performance" | "npcr" | "entropy" | "correlation" | "mse">("overview");
   const [actionError, setActionError] = useState("");
+  const [correlationDirection, setCorrelationDirection] = useState<CorrelationDirection>("h");
   const fetcher = useCallback((signal: AbortSignal) => fetchAll(signal), []);
   const { data, error, loading, refresh } = usePolling(fetcher, 10000);
   const records = data?.records ?? [];
@@ -76,7 +86,7 @@ export function ImageLab() {
         <p className="dash-note">AES-CBC propagates a one-pixel change only forward from its block to the end of the image, so averaged over random pixel positions NPCR is about 50% and UACI about 16.7%, about half the ideal values. Dedicated image ciphers add a permutation/diffusion layer to approach the ideal.</p>
       </>}
       {section === "entropy" && <EntropyTable records={records} />}
-      {section === "correlation" && <CorrelationTable records={records} />}
+      {section === "correlation" && <><nav className="dash-subtabs">{([["h", "Horizontal"], ["v", "Vertical"], ["d", "Diagonal"]] as const).map(([value, label]) => <button key={value} className={correlationDirection === value ? "selected" : ""} onClick={() => setCorrelationDirection(value)}>{label}</button>)}</nav><CorrelationTable records={records} direction={correlationDirection} /></>}
       {section === "mse" && <MseTable records={records} />}
     </>}
   </div>;

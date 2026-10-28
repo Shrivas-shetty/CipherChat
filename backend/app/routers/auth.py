@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.db.base import get_db
-from app.db.models import AuditLog, AuthSession, User, to_iso_z, utc_now
+from app.db.models import AuditLog, AuthSession, SigningKey, User, to_iso_z, utc_now
 from app.deps import get_client_ip, get_current_auth, get_current_user
 from app.security.passwords import (
     hash_password,
@@ -256,7 +256,14 @@ async def logout(
     client_ip = get_client_ip(request)
 
     session.revoked_at = utc_now()
+    keys = db.query(SigningKey).filter(SigningKey.auth_jti == session.jti, SigningKey.retired_at.is_(None)).all()
+    for key in keys:
+        key.retired_at = utc_now()
+        key.retire_reason = "logout"
     db.commit()
+    for key in keys:
+        log_event("SIGNING_KEY_RETIRED", severity="info", user_id=user.id,
+                  session_id=session.jti, details={"key_id": key.id, "reason": "logout"})
 
     log_event(
         "LOGOUT",

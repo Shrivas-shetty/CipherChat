@@ -36,7 +36,7 @@ def test_image_schema_and_oracle_is_deterministic():
     assert ImageMetricRequest.model_fields.keys() == payload_schema_names()
     assert ImageMetricRequest.model_fields["session_id"].annotation is str
     properties = ImageMetricRequest.model_json_schema()["properties"]
-    nullable = {"corr_pt_r", "corr_pt_g", "corr_pt_b", "corr_pt_avg", "corr_ct_r", "corr_ct_g", "corr_ct_b", "corr_ct_avg", "psnr_dec", "psnr_enc"}
+    nullable = {name for name in payload_schema_names() if name.startswith("corr_")} | {"psnr_dec", "psnr_enc"}
     for name, schema in properties.items():
         if name == "session_id":
             assert schema["type"] == "string"
@@ -49,13 +49,19 @@ def test_image_schema_and_oracle_is_deterministic():
     root = Path(__file__).resolve().parents[2]
     vectors = json.loads((root / "shared/test_vectors/image_metrics.json").read_text(encoding="utf-8"))
     assert vectors == make_vectors()
+    for case in vectors["cases"]:
+        assert set(case["corr_v_pt"]) == {"r", "g", "b", "avg"}
+        assert set(case["corr_d_ct"]) == {"r", "g", "b", "avg"}
     for relative in ("backend/app/routers/lab.py", "backend/app/services/lab_queries.py", "backend/app/db/lab_models.py"):
         source = (root / relative).read_text(encoding="utf-8")
         assert "app.crypto." not in source and "cryptography" not in source
 
 
 def payload_schema_names():
-    return set(payload({"image_id": 1, "sid": "x"})) - set()
+    return set(payload({"image_id": 1, "sid": "x"})) | {
+        f"corr_{direction}_{kind}_{channel}"
+        for direction in ("v", "d") for kind in ("pt", "ct") for channel in ("r", "g", "b", "avg")
+    }
 
 
 def test_image_post_and_analyst_cipher_noise_endpoints(scenario):
@@ -75,6 +81,8 @@ def test_image_post_and_analyst_cipher_noise_endpoints(scenario):
         row = db.query(ImageMetric).one()
         assert row.message_id == body["message_id"] and row.npcr_trial_pcts == body["npcr_trial_pcts"]
         assert row.corr_ct_avg is None and row.psnr_dec is None
+        assert all(getattr(row, f"corr_{direction}_{kind}_{channel}") is None
+                   for direction in ("v", "d") for kind in ("pt", "ct") for channel in ("r", "g", "b", "avg"))
         db.execute(__import__("sqlalchemy").text("PRAGMA wal_checkpoint(FULL)"))
     raw = (scenario["path"]).read_bytes()
     for secret in (scenario["key"], scenario["image_pixels"], scenario["image_iv"], scenario["image_ct"]):
@@ -159,6 +167,47 @@ def test_image_payload_strictness_and_shared_rate_limit(scenario, monkeypatch):
     assert client.post("/api/lab/text-metrics", json=__import__("tests.test_lab_text_metrics", fromlist=["_payload"])._payload(scenario), headers=_auth(scenario["alice"])).status_code == 201
     limited = client.post("/api/lab/image-metrics", json=body, headers=_auth(scenario["alice"]))
     assert limited.status_code == 429 and limited.headers.get("retry-after")
+
+
+def test_new_directional_fields_are_optional_stored_and_range_checked(scenario):
+    body = payload(scenario)
+    names = [f"corr_{direction}_{kind}_{channel}" for direction in ("v", "d") for kind in ("pt", "ct") for channel in ("r", "g", "b", "avg")]
+    body.update({name: 0.25 for name in names})
+    response = scenario["client"].post("/api/lab/image-metrics", json=body, headers=_auth(scenario["alice"]))
+    assert response.status_code == 201
+    with lab_base.LabSessionLocal() as db:
+        row = db.query(ImageMetric).one()
+        assert all(getattr(row, name) == 0.25 for name in names)
+    listed = scenario["client"].get("/api/dashboard/lab/image/records", headers=_auth(scenario["analyst"])).json()["items"][0]
+    assert all(listed[name] == 0.25 for name in names)
+
+
+def test_directional_fields_are_range_checked(scenario):
+    body = payload(scenario); body["corr_v_pt_r"] = 1.01
+    response = scenario["client"].post("/api/lab/image-metrics", json=body, headers=_auth(scenario["alice"]))
+    assert response.status_code == 400 and response.json()["detail"]["code"] == "out_of_range"
+
+
+@pytest.mark.parametrize(("width", "height", "field"), [(2, 1, "corr_v_pt_r"), (2, 1, "corr_d_pt_r"), (1, 2, "corr_pt_r"), (1, 2, "corr_d_ct_avg")])
+def test_rejects_correlations_without_pixel_pairs(scenario, width, height, field):
+    from app.crypto.envelope import encrypt_message
+    from app.image import image_meta_json
+    n = width * height * 3
+    env = encrypt_message(scenario["keys_a"].k_enc, scenario["keys_a"].k_mac, scenario["sid"], "I", 4,
+                          bytes(range(n)), "image", image_meta_json(width, height))
+    sent = scenario["client"].post("/api/messages", headers=_auth(scenario["alice"]), json={
+        "session_id": scenario["sid"], "counter": 4, "msg_type": "image", "meta_json": env.meta_json,
+        "iv": env.iv_b64, "ct": env.ct_b64, "hmac": env.hmac_b64,
+    })
+    assert sent.status_code == 201
+    body = payload(scenario); body.update(message_id=sent.json()["id"], width=width, height=height, n_pixels=width * height,
+                                          pt_len_bytes=n, ct_len_bytes=len(env.ct), flip_byte_idx=[0, n - 1])
+    body[field] = 0.1
+    response = scenario["client"].post("/api/lab/image-metrics", json=body, headers=_auth(scenario["alice"]))
+    assert response.status_code == 400 and response.json()["detail"]["code"] == "corr_inconsistent"
+    with base.SessionLocal() as db:
+        event = db.query(AuditLog).filter(AuditLog.event_type == "METRICS_REJECTED").order_by(AuditLog.id.desc()).first()
+        assert event and event.details == {"reason": "corr_inconsistent", "message_id": sent.json()["id"]}
 
 
 def _audit_count():

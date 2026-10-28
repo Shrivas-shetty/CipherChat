@@ -17,7 +17,7 @@ from app.main import create_app
 from app.services.dashboard_queries import EVENT_CATEGORIES
 from app.tests.test_messages_api import _establish_session, _get_token
 from tests.tools.make_text_metric_vectors import make_vectors
-from app.routers import lab as lab_router
+from app.services import rate_limit
 from app.ws.manager import manager
 from app.ws.session_coordinator import coordinator
 
@@ -30,7 +30,7 @@ def scenario(tmp_path: Path):
     set_engine_and_session(app_engine); set_lab_engine_and_session(lab_engine)
     Base.metadata.create_all(bind=app_engine); LabBase.metadata.create_all(bind=lab_engine)
     manager._users.clear(); manager._ws_to_user.clear()
-    lab_router._post_times.clear()
+    rate_limit._events.clear()
     coordinator.active_session_id = None; coordinator.initiator = None; coordinator.responder = None; coordinator.status = "none"
     with TestClient(create_app()) as client:
         alice = _get_token(client, "alice")

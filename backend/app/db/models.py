@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Float,
     Integer,
     JSON,
     LargeBinary,
@@ -55,6 +56,20 @@ class AuthSession(Base):
     user_agent = Column(String(255), nullable=True)
 
     user = relationship("User", back_populates="sessions")
+
+
+class SigningKey(Base):
+    __tablename__ = "signing_keys"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    auth_jti = Column(String(36), nullable=False, index=True)
+    # Kept under its legacy column name; Phase 12 stores raw 65-byte SEC1 P-256 points.
+    public_key_der = Column(LargeBinary, nullable=False)
+    fingerprint = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    retired_at = Column(DateTime(timezone=True), nullable=True)
+    retire_reason = Column(String(20), nullable=True)
+    keygen_ms = Column(Float, nullable=True)
 
 
 class AuditLog(Base):
@@ -117,6 +132,13 @@ class Message(Base):
     verification_status = Column(String(20), default="pending", nullable=False, index=True)  # "pending" | "verified" | "failed"
     verification_reason = Column(String(50), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
+    pt_len_bytes = Column(Integer, nullable=True)
+    hmac_gen_us = Column(Float, nullable=True)
+    signer_key_id = Column(Integer, ForeignKey("signing_keys.id"), nullable=True)
+    signature = Column(LargeBinary, nullable=True)
+    sig_gen_ms = Column(Float, nullable=True)
+    signature_status = Column(String(20), nullable=True)
+    sig_verify_ms = Column(Float, nullable=True)
 
     session = relationship("ChatSession")
     sender = relationship("User", foreign_keys=[sender_id])

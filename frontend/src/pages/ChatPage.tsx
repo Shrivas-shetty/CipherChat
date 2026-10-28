@@ -24,6 +24,7 @@ type Props = {
   role: "initiator" | "responder" | null;
   fingerprint: string | null;
   timings: HandshakeTimings;
+  mySigningKey: { id: number; fingerprint: string; keygenMs: number } | null;
   failureReason: string | null;
   terminationReason: string | null;
   onRequestSession: () => void;
@@ -46,6 +47,7 @@ export function ChatPage({
   role,
   fingerprint,
   timings,
+  mySigningKey,
   failureReason,
   terminationReason,
   onRequestSession,
@@ -223,6 +225,8 @@ export function ChatPage({
                 <span className="detail-label">Derive:</span>
                 <span className="detail-val">{timings.derive_ms} ms</span>
               </div>
+              {mySigningKey && <div className="detail-item"><span className="detail-label">My signing key:</span><span className="detail-val">ID {mySigningKey.id} · {mySigningKey.fingerprint.match(/.{4}/g)?.slice(0, 4).join(" ").toUpperCase()} · generated in {mySigningKey.keygenMs.toFixed(2)} ms</span></div>}
+              {(() => { const peerKey = messages.find((message) => !message.mine && message.wire?.signatureFingerprint); return peerKey?.wire?.signatureFingerprint ? <><div className="detail-item"><span className="detail-label">Peer signing key:</span><span className="detail-val">ID {peerKey.wire.signerKeyId} · {peerKey.wire.signatureFingerprint}</span></div><p className="crypto-explainer">Compare fingerprints with your peer to detect key substitution by the server.</p></> : null; })()}
               <p className="crypto-explainer">
                 Diffie-Hellman RFC 3526 Group 14 (2048-bit MODP safe prime) + HKDF-SHA256 (RFC 5869).
                 End-to-end encrypted with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC).
@@ -389,6 +393,12 @@ export function ChatPage({
                                   {m.wire.hmacHex}
                                 </code>
                               </div>
+                              <h4 className="wire-section-title">Authenticity (digital signature)</h4>
+                              <div className="wire-row"><span className="wire-key">HMAC generation time:</span><span className="wire-val">{m.wire.hmacGenUs == null ? "—" : `${m.wire.hmacGenUs.toFixed(3)} µs${isMine ? " (measured locally)" : " (sender-reported)"}`}</span></div>
+                              <div className="wire-row"><span className="wire-key">Signer key:</span><span className="wire-val">{m.wire.signerKeyId == null ? "— (legacy message)" : `ID ${m.wire.signerKeyId} · ${m.wire.signatureFingerprint ?? "fingerprint unavailable"}`}</span></div>
+                              <div className="wire-row"><span className="wire-key">Signature:</span><code className="wire-val wire-mono">{m.wire.signatureHex ? `${m.wire.signatureHex.slice(0, 32)}... (64 bytes)` : "unavailable"}</code></div>
+                              <div className="wire-row"><span className="wire-key">Signature generation time:</span><span className="wire-val">{m.wire.signatureGenMs == null ? "—" : `${m.wire.signatureGenMs.toFixed(3)} ms${isMine ? "" : " (sender-reported)"}`}</span></div>
+                              <div className="wire-row"><span className="wire-key">Signature verification:</span><span className={`wire-val ${m.wire.signatureStatus === "valid" || m.wire.peerSignatureStatus === "valid" ? "verified-text" : m.wire.signatureStatus === "invalid" || m.wire.peerSignatureStatus === "invalid" ? "failed-text" : ""}`}>{isMine ? m.wire.peerSignatureStatus ? `Peer verification: ${m.wire.peerSignatureStatus.toUpperCase()}, ${m.wire.peerSignatureVerifyMs?.toFixed(3) ?? "—"} ms` : "Peer verification: pending" : m.wire.signatureStatus === "valid" ? `VALID, ${m.wire.signatureVerifyMs?.toFixed(3)} ms` : m.wire.signatureStatus === "invalid" ? `INVALID${m.wire.signatureVerifyMs == null ? "" : `, ${m.wire.signatureVerifyMs.toFixed(3)} ms`}` : "not checked"}</span></div>
                               <div className="wire-row">
                                 <span className="wire-key">Latency:</span>
                                 <span className="wire-val">

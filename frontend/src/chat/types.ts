@@ -7,6 +7,15 @@ export interface WireDetails {
   latencyMs: number;
   verified: boolean;
   reason?: string;
+  hmacGenUs?: number | null;
+  signerKeyId?: number | null;
+  signatureHex?: string;
+  signatureFingerprint?: string;
+  signatureGenMs?: number | null;
+  signatureStatus?: "valid" | "invalid" | "not_checked" | "pending";
+  signatureVerifyMs?: number | null;
+  peerSignatureStatus?: "valid" | "invalid";
+  peerSignatureVerifyMs?: number | null;
   image?: { w: number; h: number; plaintextBytes: number; overheadBytes: number; decodeMs?: number; cryptoMs?: number; pixelHash: string };
 }
 

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, DateTime, Float, Integer, JSON, String
+from sqlalchemy import ForeignKey, Index
 
 from app.db.lab_base import LabBase
 from app.db.models import utc_now
@@ -62,6 +63,22 @@ class ImageMetric(LabBase):
     corr_ct_g = Column(Float, nullable=True)
     corr_ct_b = Column(Float, nullable=True)
     corr_ct_avg = Column(Float, nullable=True)
+    corr_v_pt_r = Column(Float, nullable=True)
+    corr_v_pt_g = Column(Float, nullable=True)
+    corr_v_pt_b = Column(Float, nullable=True)
+    corr_v_pt_avg = Column(Float, nullable=True)
+    corr_v_ct_r = Column(Float, nullable=True)
+    corr_v_ct_g = Column(Float, nullable=True)
+    corr_v_ct_b = Column(Float, nullable=True)
+    corr_v_ct_avg = Column(Float, nullable=True)
+    corr_d_pt_r = Column(Float, nullable=True)
+    corr_d_pt_g = Column(Float, nullable=True)
+    corr_d_pt_b = Column(Float, nullable=True)
+    corr_d_pt_avg = Column(Float, nullable=True)
+    corr_d_ct_r = Column(Float, nullable=True)
+    corr_d_ct_g = Column(Float, nullable=True)
+    corr_d_ct_b = Column(Float, nullable=True)
+    corr_d_ct_avg = Column(Float, nullable=True)
     mse_dec = Column(Float, nullable=False)
     psnr_dec = Column(Float, nullable=True)
     mse_enc = Column(Float, nullable=False)
@@ -69,3 +86,37 @@ class ImageMetric(LabBase):
     enc_us = Column(Float, nullable=False)
     dec_us = Column(Float, nullable=False)
     timing_iters = Column(Integer, nullable=False)
+
+
+class BenchRun(LabBase):
+    __tablename__ = "bench_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    label = Column(String(64), nullable=False)
+    repeats = Column(Integer, nullable=False)
+    warmup = Column(Integer, nullable=False)
+    text_lengths = Column(JSON, nullable=False)
+    image_sides = Column(JSON, nullable=False)
+    handshake_ms = Column(JSON, nullable=False)
+    note = Column(String(200), nullable=True)
+
+
+class BenchSample(LabBase):
+    __tablename__ = "bench_samples"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("bench_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False)
+    mode = Column(String(10), nullable=False)
+    kind = Column(String(10), nullable=False)
+    size_param = Column(Integer, nullable=False)
+    plaintext_bytes = Column(Integer, nullable=False)
+    crypto_send_ms = Column(Float, nullable=False)
+    to_notify_ms = Column(Float, nullable=False)
+    fetch_ms = Column(Float, nullable=False)
+    crypto_recv_ms = Column(Float, nullable=False)
+    e2e_ms = Column(Float, nullable=False)
+    post_ms = Column(Float, nullable=False)
+    verify_post_ms = Column(Float, nullable=True)
+    bytes_up = Column(Integer, nullable=False)
+    bytes_down = Column(Integer, nullable=False)
+    ws_notify_bytes = Column(Integer, nullable=False)

@@ -29,9 +29,11 @@ from app.crypto.kdf import (
 from app.db import base
 from app.db.base import Base, set_engine_and_session
 from app.db.models import AuditLog, ChatSession, Message, User
+from app.image import ImageFormatError, parse_image_meta
 from app.main import create_app
 from app.services.tamper import tamper_service
 from app.ws.session_coordinator import coordinator
+from app.tests.signing_helpers import signed_message_payload
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,8 @@ def setup_test_db(tmp_path: Path):
         connect_args={"check_same_thread": False},
     )
     set_engine_and_session(test_engine)
+    from app.services import rate_limit
+    rate_limit._events.clear()
     Base.metadata.create_all(bind=test_engine)
 
     # Reset coordinator state
@@ -86,7 +90,53 @@ def _get_token(client: TestClient, username: str, role: str = "user") -> str:
         "/api/auth/login",
         json={"username": username, "password": "Password123" if role == "user" else "Analyst123"},
     )
-    return res.json()["token"]
+    token = res.json()["token"]
+    if not hasattr(client, "_cipherchat_raw_post"):
+        client._cipherchat_raw_post = client.post
+        client._cipherchat_roles = {}
+        client._cipherchat_user_ids = {}
+        def signed_post(path, *args, **kwargs):
+            body = kwargs.get("json")
+            headers = kwargs.get("headers") or {}
+            bearer = next((value for key, value in headers.items() if key.lower() == "authorization" and value.startswith("Bearer ")), "")
+            auth_token = bearer[7:]
+            if path == "/api/messages" and isinstance(body, dict) and "signature" not in body and client._cipherchat_roles.get(auth_token) == "user":
+                try:
+                    iv = base64.b64decode(body["iv"], validate=True); ct = base64.b64decode(body["ct"], validate=True); tag = base64.b64decode(body["hmac"], validate=True)
+                    with base.SessionLocal() as db:
+                        chat = db.query(ChatSession).filter(ChatSession.id == body["session_id"].strip().lower()).first()
+                    role_code = "I" if chat and chat.user_a_id == client._cipherchat_user_ids.get(auth_token) else "R"
+                    envelope = Envelope(body["session_id"], role_code, body["counter"], body["msg_type"], body["meta_json"], iv, ct, tag)
+                    if envelope.msg_type == "image":
+                        width, height = parse_image_meta(envelope.meta_json)
+                        pt_len = width * height * 3
+                    else:
+                        pt_len = max(1, len(ct) - 16)
+                    body = {**body, **signed_message_payload(client, auth_token, envelope, pt_len)}
+                    kwargs["json"] = body
+                except (KeyError, ValueError, TypeError, json.JSONDecodeError, ImageFormatError):
+                    pass
+            if isinstance(path, str) and path.startswith("/api/messages/") and path.endswith("/verification") and isinstance(body, dict) and "sig_status" not in body:
+                try:
+                    message_id = int(path.split("/")[3])
+                    with base.SessionLocal() as db:
+                        signed = db.query(Message.signature).filter(Message.id == message_id).scalar() is not None
+                    if signed:
+                        if body.get("status") == "verified":
+                            body = {**body, "sig_status": "valid", "sig_verify_ms": 1.0}
+                        elif body.get("reason") == "bad_signature":
+                            body = {**body, "sig_status": "invalid", "sig_verify_ms": 1.0}
+                        else:
+                            body = {**body, "sig_status": "not_checked", "sig_verify_ms": None}
+                        kwargs["json"] = body
+                except (ValueError, IndexError):
+                    pass
+            return client._cipherchat_raw_post(path, *args, **kwargs)
+        client.post = signed_post
+    client._cipherchat_roles[token] = role
+    with base.SessionLocal() as db:
+        client._cipherchat_user_ids[token] = db.query(User.id).filter(User.username_norm == username.lower()).scalar()
+    return token
 
 
 def _establish_session(client: TestClient, ws_a, ws_b, alice_token, bob_token):

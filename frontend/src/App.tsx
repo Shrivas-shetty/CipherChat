@@ -18,9 +18,11 @@ import { AnalystPage } from "./pages/AnalystPage";
 import { AuthPage } from "./pages/AuthPage";
 import { ChatPage } from "./pages/ChatPage";
 import { ChatSocket, type IncomingFrame } from "./ws/chatSocket";
+import { keyStore } from "./signing/keyStore";
+import { ApiError } from "./api/http";
 
 function MainApp() {
-  const { user, token, loading, logout, setAuthError } = useAuth();
+  const { user, token, loading, logout, setAuthError, signingStatus, retrySigningKeys } = useAuth();
   const [serverAddress, setServerAddress] = useState<ServerAddress>(() =>
     loadServerAddress()
   );
@@ -134,7 +136,7 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    if (!token || user?.role !== "user") {
+    if (!token || user?.role !== "user" || signingStatus !== "ready") {
       intentionalCloseRef.current = true;
       socketRef.current?.close();
       socketRef.current = null;
@@ -231,7 +233,9 @@ function MainApp() {
               frame.message_id,
               frame.counter,
               frame.status,
-              frame.reason
+              frame.reason,
+              frame.sig_status,
+              frame.sig_verify_ms
             );
             break;
           case "peer_left":
@@ -277,19 +281,21 @@ function MainApp() {
       clearSessionKeys();
       messageService.reset();
     };
-  }, [token, user?.id, user?.role, serverAddress, logout, setAuthError]);
+  }, [token, user?.id, user?.role, signingStatus, serverAddress, logout, setAuthError]);
 
   async function onSend(text: string) {
     if (!user || !sessionRoleRef.current) {
       throw new Error("No active secure session");
     }
     const roleCode = sessionRoleRef.current === "initiator" ? "I" : "R";
-    await messageService.sendText(text, user.username, roleCode);
+    try { await messageService.sendText(text, user.username, roleCode); }
+    catch (error) { if (error instanceof ApiError && error.detail === "wrong_signing_key") retrySigningKeys(); throw error; }
   }
 
   async function onSendImage(file: File, prepared?: import("./image/decode").DecodedImage) {
     if (!user || !sessionRoleRef.current) throw new Error("No active secure session");
-    await messageService.sendImage(file, user.username, sessionRoleRef.current === "initiator" ? "I" : "R", prepared);
+    try { await messageService.sendImage(file, user.username, sessionRoleRef.current === "initiator" ? "I" : "R", prepared); }
+    catch (error) { if (error instanceof ApiError && error.detail === "wrong_signing_key") retrySigningKeys(); throw error; }
   }
 
   function handleRequestSession() {
@@ -338,6 +344,13 @@ function MainApp() {
     return <AnalystPage />;
   }
 
+  if (signingStatus !== "ready") {
+    return <div className="page connect-page"><section className="panel auth-panel" role="status">
+      {signingStatus === "error" ? <><p className="msg err">Signing key generation or registration failed. Chat remains locked until a key is registered.</p><button className="btn primary" onClick={retrySigningKeys}>Retry</button><button className="btn secondary" onClick={() => void logout()}>Logout</button></>
+        : <><div className="loading-spinner" aria-hidden="true"/><p className="loading-text">Generating your ECDSA P-256 signing keys...</p></>}
+    </section></div>;
+  }
+
   return (
     <ChatPage
       username={user.username}
@@ -352,6 +365,7 @@ function MainApp() {
       role={sessionRole}
       fingerprint={fingerprint}
       timings={timings}
+      mySigningKey={keyStore.get() ? { id: keyStore.get()!.keyId, fingerprint: keyStore.get()!.fingerprint, keygenMs: keyStore.get()!.keygenMs } : null}
       failureReason={failureReason}
       terminationReason={terminationReason}
       onRequestSession={handleRequestSession}

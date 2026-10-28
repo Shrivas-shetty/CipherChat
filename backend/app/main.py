@@ -8,10 +8,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 
+from app import config
 from app.config import CORS_ORIGIN_REGEX
 from app.db.base import init_db
 from app.db.lab_base import init_lab_db
-from app.routers import admin, auth, dashboard, health, lab, messages, ws
+from app.db.network_base import init_network_db, NetworkSessionLocal
+from app.db.network_models import PcapFile
+from sqlalchemy import update
+from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, network, ws, keys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,8 +25,15 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    if config.ALLOW_PLAINTEXT_BASELINE:
+        logging.getLogger(__name__).warning("Plaintext baseline endpoints are ENABLED (benchmark use only)")
     init_db()
     init_lab_db()
+    config.get_pcap_dir()
+    init_network_db()
+    with NetworkSessionLocal() as network_db:
+        network_db.execute(update(PcapFile).where(PcapFile.status.in_(("queued", "running"))).values(status="failed", error="server_restart"))
+        network_db.commit()
     from app.db import base
     from app.db.models import ChatSession, utc_now
 
@@ -61,6 +72,18 @@ def create_app() -> FastAPI:
 
     @application.middleware("http")
     async def limit_message_post_size(request, call_next):
+        if request.url.path.startswith("/api/baseline/") and not config.ALLOW_PLAINTEXT_BASELINE:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        if request.method == "POST" and request.url.path == "/api/baseline/messages":
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 1_200_000) or len(body) > 1_200_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if request.method == "POST" and request.url.path == "/api/dashboard/bench/runs":
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 512_000) or len(body) > 512_000:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
         if request.method == "POST" and request.url.path == "/api/messages":
             raw_length = request.headers.get("content-length", "")
             if raw_length.isdigit() and int(raw_length) > 1_200_000:
@@ -74,9 +97,13 @@ def create_app() -> FastAPI:
 
     application.include_router(health.router)
     application.include_router(auth.router)
+    application.include_router(keys.router)
     application.include_router(messages.router)
+    application.include_router(baseline.router)
     application.include_router(admin.router)
     application.include_router(dashboard.router)
+    application.include_router(bench.router)
+    application.include_router(network.router)
     application.include_router(lab.router)
     application.include_router(ws.router)
 
@@ -92,9 +119,19 @@ def create_app() -> FastAPI:
         async def spa_fallback(full_path: str):
             # API and /ws are registered above and take precedence.
             candidate = dist_dir / full_path
-            if full_path and candidate.is_file():
+            if full_path and full_path != "index.html" and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(dist_dir / "index.html")
+            # The HTML references content-hashed chunks. Keeping an older index
+            # cached after a rebuild makes browsers request chunks that no
+            # longer exist, which leaves the SPA blank.
+            return FileResponse(
+                dist_dir / "index.html",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
     return application
 

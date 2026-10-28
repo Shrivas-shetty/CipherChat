@@ -2,11 +2,12 @@ import { useMemo } from "react";
 import { CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from "recharts";
 import { linearRegression, regressionLineEnds, type Point } from "../../../analysis/stats";
 
-export type PlotSeries = { name: string; color: string; points: (Point & { messageId?: number })[]; regression?: boolean };
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload: Point & { messageId?: number } }> }) {
+export type PlotPoint = Point & { messageId?: number; width?: number | null; height?: number | null; nPixels?: number | null };
+export type PlotSeries = { name: string; color: string; points: PlotPoint[]; regression?: boolean };
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload: PlotPoint }> }) {
   if (!active || !payload?.length) return null;
-  const data = payload[0].payload as Point & { messageId?: number };
-  return <div className="lab-tooltip">{data.messageId !== undefined && <b>Message #{data.messageId}</b>}<br />x: {data.x}<br />y: {data.y}</div>;
+  const data = payload[0].payload;
+  return <div className="lab-tooltip">{data.messageId !== undefined && <b>Message #{data.messageId}</b>}<br />x: {data.x}<br />y: {data.y}{data.width && data.height && <><br/>Dimensions: {data.width} × {data.height}<br/>Total pixels: {data.nPixels?.toLocaleString()}</>}</div>;
 }
 
 export function ScatterWithRegression({ title, subtitle, xLabel, yLabel, series, showRegression = true, referenceY, referenceLabel, referenceDashed = true, referenceY2, referenceLabel2, referenceY2Dashed = true, yDomain }: {

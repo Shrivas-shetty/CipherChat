@@ -10,24 +10,34 @@ export function shannonEntropy(bytes: Uint8Array, channel: 0 | 1 | 2, n = bytes.
   return entropy;
 }
 
-export function pearsonHorizontal(buf: Uint8Array, w: number, h: number, channel: 0 | 1 | 2): number | null {
-  if (w <= 1 || h <= 0 || buf.length < w * h * 3) return null;
-  const pairs = h * (w - 1);
+export type Direction = "h" | "v" | "d";
+export function pairCount(w: number, h: number, dir: Direction): number {
+  return dir === "h" ? h * Math.max(0, w - 1) : dir === "v" ? w * Math.max(0, h - 1) : Math.max(0, w - 1) * Math.max(0, h - 1);
+}
+
+export function pearsonDirectional(buf: Uint8Array, w: number, h: number, channel: 0 | 1 | 2, dir: Direction): number | null {
+  const pairs = pairCount(w, h, dir);
+  if (!pairs || h <= 0 || w <= 0 || buf.length < w * h * 3) return null;
+  const step = dir === "h" ? 3 : dir === "v" ? w * 3 : (w + 1) * 3;
+  const visit = (fn: (i: number) => void) => {
+    if (dir === "h") { for (let y = 0; y < h; y += 1) for (let x = 0; x < w - 1; x += 1) fn((y * w + x) * 3 + channel); }
+    else if (dir === "v") { for (let y = 0; y < h - 1; y += 1) for (let x = 0; x < w; x += 1) fn((y * w + x) * 3 + channel); }
+    else { for (let y = 0; y < h - 1; y += 1) for (let x = 0; x < w - 1; x += 1) fn((y * w + x) * 3 + channel); }
+  };
   let sx = 0, sy = 0;
-  for (let y = 0; y < h; y += 1) for (let x = 0; x < w - 1; x += 1) {
-    const i = (y * w + x) * 3 + channel; sx += buf[i]; sy += buf[i + 3];
-  }
+  visit((i) => { sx += buf[i]; sy += buf[i + step]; });
   const mx = sx / pairs, my = sy / pairs;
   let cov = 0, vx = 0, vy = 0;
-  for (let y = 0; y < h; y += 1) for (let x = 0; x < w - 1; x += 1) {
-    const i = (y * w + x) * 3 + channel, dx = buf[i] - mx, dy = buf[i + 3] - my;
-    cov += dx * dy; vx += dx * dx; vy += dy * dy;
-  }
+  visit((i) => { const dx = buf[i] - mx, dy = buf[i + step] - my; cov += dx * dy; vx += dx * dx; vy += dy * dy; });
   return vx === 0 || vy === 0 ? null : cov / Math.sqrt(vx * vy);
 }
 
-export function correlationSet(buf: Uint8Array, w: number, h: number): CorrelationSet {
-  const [r, g, b] = [0, 1, 2].map((c) => pearsonHorizontal(buf, w, h, c as 0 | 1 | 2));
+export function pearsonHorizontal(buf: Uint8Array, w: number, h: number, channel: 0 | 1 | 2): number | null {
+  return pearsonDirectional(buf, w, h, channel, "h");
+}
+
+export function correlationSet(buf: Uint8Array, w: number, h: number, dir: Direction = "h"): CorrelationSet {
+  const [r, g, b] = [0, 1, 2].map((c) => pearsonDirectional(buf, w, h, c as 0 | 1 | 2, dir));
   const values = [r, g, b].filter((v): v is number => v !== null);
   return { r, g, b, avg: values.length ? values.reduce((a, v) => a + v, 0) / values.length : null };
 }

@@ -12,7 +12,8 @@ export type EnvelopeFailureReason =
   | "bad_format"
   | "replay"
   | "hmac_mismatch"
-  | "decrypt_error";
+  | "decrypt_error"
+  | "bad_signature";
 
 export const MAX_IMAGE_CIPHERTEXT_BYTES = 786_448;
 
@@ -205,14 +206,13 @@ export function encryptImage(
   return { session_id: sessionId.trim().toLowerCase(), sender_role: senderRole, counter, msg_type: "image", meta_json: meta, iv, ct, hmac: hmac(sha256, kMac, macIn) };
 }
 
-export function verifyAndDecrypt(
-  kEnc: Uint8Array,
+export function verifyEnvelopeHmac(
   kMac: Uint8Array,
   sessionId: string,
   senderRole: "I" | "R",
   envelope: Envelope,
   lastCounter: number
-): string | Uint8Array {
+): Uint8Array {
   // 1. Format checks
   if (
     !envelope.iv ||
@@ -256,7 +256,10 @@ export function verifyAndDecrypt(
     throw new EnvelopeError("hmac_mismatch");
   }
 
-  // 4. Decrypt + PKCS7 unpad + UTF-8 decode
+  return macIn;
+}
+
+function decryptWithKey(kEnc: Uint8Array, envelope: Envelope): string | Uint8Array {
   try {
     const cipher = cbc(kEnc, envelope.iv);
     const ptBytes = cipher.decrypt(envelope.ct);
@@ -279,10 +282,23 @@ export function verifyAndDecrypt(
   }
 }
 
-export function envelopeToWire(env: Envelope): WireEnvelope {
+export function verifyAndDecrypt(
+  kEnc: Uint8Array, kMac: Uint8Array, sessionId: string, senderRole: "I" | "R",
+  envelope: Envelope, lastCounter: number
+): string | Uint8Array {
+  verifyEnvelopeHmac(kMac, sessionId, senderRole, envelope, lastCounter);
+  return decryptWithKey(kEnc, envelope);
+}
+
+export function decryptVerifiedWithKey(kEnc: Uint8Array, envelope: Envelope): string | Uint8Array {
+  return decryptWithKey(kEnc, envelope);
+}
+
+// The API derives sender_role from the authenticated user. Keep the role in
+// the local envelope for MAC verification, but never send it in POST bodies.
+export function envelopeToWire(env: Envelope): Omit<WireEnvelope, "sender_role"> {
   return {
     session_id: env.session_id,
-    sender_role: env.sender_role,
     counter: env.counter,
     msg_type: env.msg_type,
     meta_json: env.meta_json,

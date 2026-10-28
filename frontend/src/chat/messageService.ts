@@ -1,5 +1,5 @@
 import { requestJson } from "../api/http";
-import { base64ToBytes } from "../crypto/base64";
+import { base64ToBytes, bytesToBase64 } from "../crypto/base64";
 import { bytesToHex } from "../crypto/encoding";
 import {
   EnvelopeError,
@@ -7,7 +7,9 @@ import {
   encryptImage,
   parseImageMeta,
   envelopeToWire,
-  verifyAndDecrypt,
+  verifyEnvelopeHmac,
+  decryptVerifiedWithKey,
+  buildMacInput,
 } from "../crypto/envelope";
 import { ReplayGuard } from "../crypto/replayGuard";
 import { getSessionKeys } from "../crypto/sessionKeys";
@@ -16,9 +18,14 @@ import { decodeImage, type DecodedImage } from "../image/decode";
 import { ciphertextToNoiseRgb, sha256Hex } from "../image/pipeline";
 import { releaseAllImageUrls, releaseObjectUrl, renderRgbPng } from "../image/render";
 import type { ImageMetricsJobInput, TextMetricsJobInput } from "../analysis/metricsJob";
+import { keyStore } from "../signing/keyStore";
+import { getPeerKey } from "../signing/peerKeys";
+import { buildSignatureInput, formatFingerprint, signEcdsa, verifyEcdsa } from "../signing/signature";
+import { measureHmacUs } from "../crypto/hmacTiming";
 
 interface GetMessageResponse {
   id: number;
+  sender_id: number;
   session_id: string;
   from_role: "I" | "R";
   msg_type: string;
@@ -27,6 +34,10 @@ interface GetMessageResponse {
   iv: string;
   ct: string;
   hmac: string;
+  signer_key_id: number | null;
+  signature: string | null;
+  sig_gen_ms: number | null;
+  hmac_gen_us: number | null;
   created_at: string;
 }
 
@@ -106,10 +117,27 @@ export class MessageService {
     const noiseUrl = await renderRgbPng(ciphertextToNoiseRgb(env.ct, decoded.w, decoded.h), decoded.w, decoded.h);
     if (generation !== this.generation) { releaseObjectUrl(url); releaseObjectUrl(noiseUrl); decoded.rgb.fill(0); throw new Error("Session ended"); }
     let res: { id: number; created_at: string };
+    let sentWire: WireDetails;
     try {
+      const signing = keyStore.get();
+      if (!signing) throw new Error("Signing key is unavailable. Please log out and sign in again.");
+      const macInput = buildMacInput(env.session_id, env.sender_role, env.counter, env.msg_type, env.meta_json, env.iv, env.ct);
+      const hmacGenUs = await measureHmacUs(keys.kMac, macInput);
+      const sigInput = buildSignatureInput(macInput, env.hmac);
+      const signStart = performance.now();
+      const signature = signEcdsa(signing.privateKey, sigInput);
+      const sigGenMs = Math.max(0.001, performance.now() - signStart);
       res = await requestJson<{ id: number; created_at: string }>("/api/messages", {
-        method: "POST", body: JSON.stringify(envelopeToWire(env)),
+        method: "POST", body: JSON.stringify({ ...envelopeToWire(env), signer_key_id: signing.keyId,
+          signature: bytesToBase64(signature), sig_gen_ms: sigGenMs, hmac_gen_us: hmacGenUs, pt_len_bytes: decoded.w * decoded.h * 3 }),
       });
+      const pixelHash = sha256Hex(decoded.rgb).slice(0, 16);
+      const wire: WireDetails = { counter, ivHex: bytesToHex(env.iv), ctHex: bytesToHex(env.ct), ctLength: env.ct.length,
+        hmacHex: bytesToHex(env.hmac), latencyMs: decoded.decodeMs + cryptoMs, verified: false, hmacGenUs,
+        signerKeyId: signing.keyId, signatureHex: bytesToHex(signature), signatureFingerprint: formatFingerprint(signing.fingerprint),
+        signatureGenMs: sigGenMs, signatureStatus: "pending", signatureVerifyMs: null,
+        image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, decodeMs: decoded.decodeMs, cryptoMs, pixelHash } };
+      sentWire = wire;
     } catch (err) {
       releaseObjectUrl(url); releaseObjectUrl(noiseUrl);
       if (!prepared) decoded.rgb.fill(0);
@@ -117,7 +145,7 @@ export class MessageService {
     }
     if (generation !== this.generation) { releaseObjectUrl(url); releaseObjectUrl(noiseUrl); decoded.rgb.fill(0); throw new Error("Session ended"); }
     const pixelHash = sha256Hex(decoded.rgb).slice(0, 16);
-    const wire: WireDetails = { counter, ivHex: bytesToHex(env.iv), ctHex: bytesToHex(env.ct), ctLength: env.ct.length, hmacHex: bytesToHex(env.hmac), latencyMs: decoded.decodeMs + cryptoMs, verified: false, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, decodeMs: decoded.decodeMs, cryptoMs, pixelHash } };
+    const wire = sentWire;
     const msg: ChatMessage = { id: String(res.id), counter, senderRole, mine: true, senderUsername: currentUsername, text: "", status: "sent", ts: res.created_at, wire, image: { w: decoded.w, h: decoded.h, plaintextBytes: decoded.rgb.length, overheadBytes: env.ct.length + 48 - decoded.rgb.length, pixelHash, url, noiseUrl, decodeMs: decoded.decodeMs, cryptoMs } };
     msg.image!.rgb = new Uint8Array(decoded.rgb);
     if (this.metricsEnqueuer) {
@@ -157,12 +185,21 @@ export class MessageService {
     );
     const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
 
+    const signing = keyStore.get();
+    if (!signing) throw new Error("Signing key is unavailable. Please log out and sign in again.");
+    const macInput = buildMacInput(env.session_id, env.sender_role, env.counter, env.msg_type, env.meta_json, env.iv, env.ct);
+    const hmacGenUs = await measureHmacUs(keys.kMac, macInput);
+    const sigInput = buildSignatureInput(macInput, env.hmac);
+    const signStart = performance.now();
+    const signature = signEcdsa(signing.privateKey, sigInput);
+    const sigGenMs = Math.max(0.001, performance.now() - signStart);
     const wireBody = envelopeToWire(env);
     const res = await requestJson<{ id: number; created_at: string }>(
       "/api/messages",
       {
         method: "POST",
-        body: JSON.stringify(wireBody),
+        body: JSON.stringify({ ...wireBody, signer_key_id: signing.keyId, signature: bytesToBase64(signature),
+          sig_gen_ms: sigGenMs, hmac_gen_us: hmacGenUs, pt_len_bytes: new TextEncoder().encode(text).length }),
       }
     );
     if (generation !== this.generation) throw new Error("Session ended");
@@ -175,6 +212,9 @@ export class MessageService {
       hmacHex: bytesToHex(env.hmac),
       latencyMs,
       verified: false,
+      hmacGenUs, signerKeyId: signing.keyId, signatureHex: bytesToHex(signature),
+      signatureFingerprint: formatFingerprint(signing.fingerprint), signatureGenMs: sigGenMs,
+      signatureStatus: "pending", signatureVerifyMs: null,
     };
 
     const myMsg: ChatMessage = {
@@ -259,7 +299,7 @@ export class MessageService {
     const activeKeys = getSessionKeys();
     if (!activeKeys || activeKeys.sessionId.toLowerCase() !== item.sessionId.toLowerCase()) return;
 
-    // 2. Strict pipeline: format -> replay -> HMAC -> decrypt
+    // 2. Strict pipeline: format -> replay -> HMAC -> signature -> decrypt
     let iv: Uint8Array = new Uint8Array();
     let ct: Uint8Array = new Uint8Array();
     let hmac: Uint8Array = new Uint8Array();
@@ -268,6 +308,9 @@ export class MessageService {
     let decryptedText = "";
     let latencyMs = 0;
     let receivedImage: { w: number; h: number; rgb: Uint8Array } | undefined;
+    let sigStatus: "valid" | "invalid" | "not_checked" = "not_checked";
+    let sigVerifyMs: number | null = null;
+    let peerFingerprint: string | undefined;
 
     const t0 = performance.now();
     try {
@@ -282,12 +325,7 @@ export class MessageService {
         throw new EnvelopeError("bad_format");
       }
 
-      const decrypted = verifyAndDecrypt(
-        activeKeys.kEnc,
-        activeKeys.kMac,
-        item.sessionId,
-        item.fromRole,
-        {
+      const envelope = {
           session_id: res.session_id,
           sender_role: res.from_role,
           counter: res.counter,
@@ -296,9 +334,27 @@ export class MessageService {
           iv,
           ct,
           hmac,
-        },
-        this.replayGuard.getLast(item.fromRole)
-      );
+        };
+      const macInput = verifyEnvelopeHmac(activeKeys.kMac, item.sessionId, item.fromRole, envelope,
+        this.replayGuard.getLast(item.fromRole));
+      if (res.signature && res.signer_key_id) try {
+        const peerKey = await getPeerKey(res.signer_key_id);
+        if (peerKey.user_id !== res.sender_id) throw new Error("Signer key identity mismatch");
+        peerFingerprint = formatFingerprint(peerKey.fingerprint);
+        const signatureBytes = base64ToBytes(res.signature);
+        const sigInput = buildSignatureInput(macInput, hmac);
+        const verifyStart = performance.now();
+        const valid = verifyEcdsa(peerKey.publicKeyBytes, sigInput, signatureBytes);
+        sigVerifyMs = Math.max(0.001, performance.now() - verifyStart);
+        if (!valid) throw new Error("Invalid signature");
+        sigStatus = "valid";
+      } catch {
+        sigStatus = "invalid";
+        failureReason = "bad_signature";
+        throw new EnvelopeError("bad_signature");
+      }
+      else sigStatus = "not_checked"; // legacy messages predate signatures
+      const decrypted = decryptVerifiedWithKey(activeKeys.kEnc, envelope);
 
       if (item.msgType === "image") {
         const { w, h } = parseImageMeta(res.meta_json);
@@ -339,6 +395,8 @@ export class MessageService {
         body: JSON.stringify({
           status: verified ? "verified" : "failed",
           reason: verified ? undefined : failureReason,
+          sig_status: sigStatus,
+          sig_verify_ms: sigVerifyMs,
         }),
       });
     } catch (reportErr) {
@@ -355,6 +413,13 @@ export class MessageService {
       latencyMs,
       verified,
       reason: failureReason,
+      hmacGenUs: res.hmac_gen_us,
+      signerKeyId: res.signer_key_id,
+      signatureFingerprint: peerFingerprint,
+      signatureHex: (() => { try { return res.signature ? bytesToHex(base64ToBytes(res.signature)) : ""; } catch { return ""; } })(),
+      signatureGenMs: res.sig_gen_ms,
+      signatureStatus: sigStatus,
+      signatureVerifyMs: sigVerifyMs,
       image: imageInfo ? { w: imageInfo.w, h: imageInfo.h, plaintextBytes: imageInfo.plaintextBytes, overheadBytes: imageInfo.overheadBytes, decodeMs: imageInfo.decodeMs, cryptoMs: imageInfo.cryptoMs, pixelHash: imageInfo.pixelHash } : undefined,
     };
 
@@ -385,7 +450,9 @@ export class MessageService {
     messageId: number,
     counter: number,
     status: "verified" | "failed",
-    reason?: string
+    reason?: string,
+    sigStatus?: "valid" | "invalid" | "not_checked",
+    sigVerifyMs?: number | null
   ): void {
     const msg = this.messages.find(
       (m) => m.mine && (m.id === String(messageId) || m.counter === counter)
@@ -398,6 +465,8 @@ export class MessageService {
       if (msg.wire) {
         msg.wire.verified = status === "verified";
         msg.wire.reason = reason;
+        if (sigStatus === "valid" || sigStatus === "invalid") msg.wire.peerSignatureStatus = sigStatus;
+        msg.wire.peerSignatureVerifyMs = sigVerifyMs ?? null;
       }
       this.notify();
     }

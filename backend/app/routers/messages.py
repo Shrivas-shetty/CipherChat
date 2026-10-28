@@ -3,14 +3,15 @@ import binascii
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import config
 from app.db.base import get_db
-from app.db.models import ChatSession, Message, User, to_iso_z, utc_now
-from app.deps import get_current_user
+from app.db.models import ChatSession, Message, SigningKey, User, to_iso_z, utc_now
+from app.deps import get_current_auth, get_current_user
+from app.crypto.sigverify import build_mac_input_bytes, build_signature_input, verify_ecdsa
 from app.services.audit import log_event
 from app.services.tamper import tamper_service
 from app.image import MAX_IMAGE_CIPHERTEXT_BYTES, ImageFormatError, expected_image_ct_len, parse_image_meta
@@ -18,31 +19,41 @@ from app.ws.manager import manager
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
-VALID_REASONS = {"bad_format", "replay", "hmac_mismatch", "decrypt_error"}
+VALID_REASONS = {"bad_format", "replay", "hmac_mismatch", "decrypt_error", "bad_signature"}
 
 
 class SendMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     session_id: str = Field(max_length=64)
     counter: int
     msg_type: str = Field(default="text", max_length=10)
-    meta_json: str = Field(default="{}", max_length=32)
+    meta_json: str = Field(default="{}")
     iv: str = Field(max_length=24)
     ct: str = Field(max_length=1_048_700)
     hmac: str = Field(max_length=44)
+    signer_key_id: int | None = Field(default=None, ge=1)
+    signature: str | None = Field(default=None, max_length=344)
+    sig_gen_ms: float | None = Field(default=None, gt=0, le=600000)
+    hmac_gen_us: float | None = Field(default=None, gt=0, le=60000000)
+    pt_len_bytes: int | None = Field(default=None, ge=1, le=786432)
 
 
 class VerifyMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     status: str  # "verified" | "failed"
     reason: Optional[str] = None
+    sig_status: str | None = None
+    sig_verify_ms: float | None = Field(default=None, gt=0, le=600000)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def send_message(
     req: SendMessageRequest,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    auth=Depends(get_current_auth),
     db: Session = Depends(get_db),
 ):
+    current_user, auth_session = auth
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > 1_200_000:
         raise HTTPException(status_code=413, detail="Request body too large")
@@ -210,6 +221,36 @@ async def send_message(
             detail="counter_not_increasing",
         )
 
+    # Phase 12 authenticity metadata is checked after existing envelope, participant,
+    # session, and replay/counter checks. The server verifies signatures only; it
+    # deliberately does not recompute or verify the shared-key HMAC.
+    if any(value is None for value in (req.signer_key_id, req.signature, req.sig_gen_ms, req.hmac_gen_us, req.pt_len_bytes)):
+        raise HTTPException(400, "signature_required")
+    if req.msg_type == "text":
+        length_ok = 1 <= req.pt_len_bytes <= 8000 and len(ct_bytes) == (req.pt_len_bytes // 16 + 1) * 16
+    else:
+        length_ok = image_dims is not None and req.pt_len_bytes == image_dims[0] * image_dims[1] * 3
+    if not length_ok:
+        raise HTTPException(400, "length_inconsistent")
+    signing_key = db.query(SigningKey).filter(SigningKey.id == req.signer_key_id).first()
+    if (not signing_key or signing_key.user_id != current_user.id or signing_key.retired_at is not None
+            or signing_key.auth_jti != auth_session.jti):
+        raise HTTPException(403, "wrong_signing_key")
+    try:
+        signature_bytes = base64.b64decode(req.signature, validate=True)
+    except (binascii.Error, ValueError):
+        signature_bytes = b""
+    if len(signature_bytes) != 64:
+        raise HTTPException(400, "bad_signature_format")
+    mac_input = build_mac_input_bytes(session_id, sender_role, req.counter, req.msg_type,
+                                      req.meta_json, iv_bytes, ct_bytes)
+    valid_signature = verify_ecdsa(signing_key.public_key_der, signature_bytes,
+                                   build_signature_input(mac_input, hmac_bytes))
+    if not valid_signature:
+        log_event("SIGNATURE_REJECTED", severity="warning", success=False, user_id=current_user.id,
+                  session_id=session_id, details={"reason": "invalid_signature", "signer_key_id": req.signer_key_id})
+        raise HTTPException(400, "invalid_signature")
+
     # Insert message
     msg = Message(
         session_id=session_id,
@@ -225,6 +266,12 @@ async def send_message(
         size_bytes=len(ct_bytes),
         created_at=utc_now(),
         verification_status="pending",
+        pt_len_bytes=req.pt_len_bytes,
+        hmac_gen_us=req.hmac_gen_us,
+        signer_key_id=req.signer_key_id,
+        signature=signature_bytes,
+        sig_gen_ms=req.sig_gen_ms,
+        signature_status="pending",
     )
     db.add(msg)
     db.commit()
@@ -315,6 +362,7 @@ async def get_message(
 
     return {
         "id": msg.id,
+        "sender_id": msg.sender_id,
         "session_id": msg.session_id,
         "from_role": msg.sender_role,
         "msg_type": msg.msg_type,
@@ -323,6 +371,10 @@ async def get_message(
         "iv": base64.b64encode(msg.iv).decode("ascii"),
         "ct": base64.b64encode(ct_served).decode("ascii"),
         "hmac": base64.b64encode(msg.hmac).decode("ascii"),
+        "signer_key_id": msg.signer_key_id,
+        "signature": base64.b64encode(msg.signature).decode("ascii") if msg.signature else None,
+        "sig_gen_ms": msg.sig_gen_ms,
+        "hmac_gen_us": msg.hmac_gen_us,
         "created_at": to_iso_z(msg.created_at),
     }
 
@@ -367,6 +419,17 @@ async def report_verification(
             detail="status must be 'verified' or 'failed'",
         )
 
+    if msg.signature is not None:
+        consistent = req.sig_status in ("valid", "invalid", "not_checked")
+        if req.status == "verified":
+            consistent = consistent and req.sig_status == "valid" and req.sig_verify_ms is not None
+        elif req.reason == "bad_signature":
+            consistent = consistent and req.sig_status == "invalid"
+        else:
+            consistent = consistent and (req.sig_status != "not_checked" or req.sig_verify_ms is None)
+        if not consistent:
+            raise HTTPException(400, "sig_inconsistent")
+
     if req.status == "failed":
         if not req.reason or req.reason not in VALID_REASONS:
             raise HTTPException(
@@ -377,6 +440,9 @@ async def report_verification(
     msg.verification_status = req.status
     msg.verification_reason = req.reason if req.status == "failed" else None
     msg.verified_at = utc_now()
+    if msg.signature is not None:
+        msg.signature_status = req.sig_status
+        msg.sig_verify_ms = req.sig_verify_ms
     db.commit()
 
     if req.status == "verified":
@@ -418,6 +484,8 @@ async def report_verification(
                 "counter": msg.counter,
                 "status": req.status,
                 "reason": msg.verification_reason,
+                "sig_status": msg.signature_status,
+                "sig_verify_ms": msg.sig_verify_ms,
             },
         )
 

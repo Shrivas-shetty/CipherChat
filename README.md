@@ -1,4 +1,4 @@
-# CipherChat (Phase 5)
+# CipherChat — Secure Chat and Security Analysis Lab
 
 Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and **end-to-end encrypted messaging with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC)** over a blind server relay architecture.
 
@@ -82,10 +82,12 @@ CipherChat/
 │   │   │   ├── messages.py   /api/messages (POST send, GET fetch, POST verification)
 │   │   │   ├── health.py     /api/health
 │   │   │   └── ws.py         /ws (WebSocket relay for handshake & message availability)
-│   │   ├── services/         Audit logging with SHA-256 hash chaining & tamper service
+│   │   ├── services/         Audit logging, lab queries, baseline store, network queries
+│   │   ├── bench/            Secure/plain traffic and performance benchmark tools
+│   │   ├── network/          PCAP ingest, PyShark adapter, exposure scanner
 │   │   ├── tests/            Pytest test suites (auth, crypto, session lifecycle, envelope, messages API)
 │   │   └── ws/               ConnectionManager & session coordinator
-│   └── data/                 SQLite database (app.db) and generated jwt_secret
+│   └── data/                 app.db, lab.db, network.db and generated jwt_secret
 ├── frontend/                 Vite + React 19 + TypeScript SPA
 │   └── src/
 │       ├── api/              HTTP client (http.ts) with Bearer token & 401 handler
@@ -104,6 +106,8 @@ CipherChat/
 │       │   ├── sessionKeys.ts Ephemeral in-memory key storage with zeroing
 │       │   ├── handshake.ts  HandshakeRunner client-side state machine
 │       │   └── __tests__/    Vitest test suites verifying envelope & shared vectors
+│       ├── dashboard/        Logs, Crypto Lab (Text/Image/Hashing), Performance and Network
+│       ├── hashlab/          Browser-only SHA-256 experiments (no server requests)
 │       ├── pages/            AuthPage, ChatPage (with Wire View), AnalystPage (with Tamper Panel)
 │       └── ws/               ChatSocket (v1 protocol with DH & message notifications)
 └── shared/
@@ -223,7 +227,7 @@ To demonstrate the Encrypt-then-MAC integrity guarantee:
 
 ## Security Dashboard (Phase 6)
 
-The analyst dashboard is a REST-polled, read-only view of metadata already stored in `app.db`. It provides a summary strip, audit Events, message metadata, session history, audit-chain verification, and the Phase 4 tamper controls. Crypto Lab and Network Analysis are placeholders for later phases.
+The analyst dashboard is a REST-polled view of stored metadata. It provides Security Logs, Crypto Lab (Text, Image, and browser-only Hashing Labs), Performance, Network Analysis, a summary strip, message metadata, session history, audit-chain verification, and tamper controls.
 
 Seed an analyst account from the backend directory, then sign in through the normal page:
 
@@ -318,13 +322,38 @@ Image security experiments run locally in the sender's browser after the encrypt
 | NPCR | Mean percentage of ciphertext-image byte positions changed after flipping one random plaintext RGB byte's least-significant bit in five trials. |
 | UACI | Mean normalized absolute ciphertext byte intensity change for those same trials. |
 | Entropy | Shannon entropy per RGB channel of the first `width × height × 3` ciphertext bytes. |
-| Horizontal correlation | Pearson correlation across every adjacent horizontal pixel pair per channel, for plaintext and cipher image. |
+| Directional correlation | Per-channel Pearson r across every adjacent pair horizontally, vertically, and diagonally down-right, for plaintext and cipher image. |
 | MSE / PSNR | Original vs local decrypted pixels and original vs cipher-image bytes; PSNR is null (infinite) when MSE is zero. |
 | AES timing | Median calibrated browser JavaScript AES-CBC encrypt/decrypt time; no network or image decoding time. |
 
 The baseline re-encryption must exactly match the sent ciphertext or the job aborts. CBC changes a ciphertext block and the suffix after it, while leaving preceding blocks unchanged. Random byte flips therefore average approximately **50% NPCR** and **16.7% UACI**, below the ideal random-cipher references of **99.61%** and **33.46%**. Expected cipher entropy is about `8 - 184/n` bits/channel for `n` pixels; cipher correlation approaches zero while natural-photo plaintext correlation is often high. Correct local decryption yields MSE 0 and infinite PSNR. Natural images commonly produce encrypted-image MSE around 8,000–12,000 and PSNR around 7–10 dB; these are observations, not validation requirements.
 
-The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as horizontal correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
+Directional correlations use every valid pair without sampling: horizontal `(r,k)` to `(r,k+1)`, vertical `(r,k)` to `(r+1,k)`, and diagonal `(r,k)` to `(r+1,k+1)`. Pearson r is computed separately for R, G, and B using two passes; directions with no pairs or zero variance show `n/a`. Natural photos usually have high plaintext correlation (often above 0.8) in all three directions. For cipher images at least 64×64, correlation is expected to be near zero (`|r| < 0.05`). These are empirical expectations, not server-verified guarantees. Image metric columns are upgraded automatically at startup: missing nullable columns are added to the existing `lab.db`, preserving existing rows with null directional values.
+
+The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as directional correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
+
+## Network analysis (Wireshark / PCAP / PyShark) — Phase 10
+
+Network analysis ingests PCAP/PCAPNG files in a separate `python -m app.network.ingest` subprocess and writes packet metadata to the third SQLite database, `backend/data/network.db` (WAL), separate from `app.db` and `lab.db`. The worker never opens the application database or audit log: the API process records `NETWORK_INGEST_STARTED`, then its watcher records `NETWORK_INGEST_DONE` or `NETWORK_INGEST_FAILED` after the worker exits. Stored data is limited to addresses, ports, protocols, lengths, timestamps, flags, normalized HTTP paths, status/content-length values, and derived counts. Payload bytes, request/response bodies, header values, tokens, and passwords are never stored. A sanitized short snippet is stored only when the optional marker is detected. PCAP files can contain credentials and tokens in cleartext; never share or commit them.
+
+Prerequisites: install Wireshark with `tshark`; install backend dependencies with `pip install -r backend/requirements.txt`. On Windows, set `TSHARK_PATH` to the full `tshark.exe` path when it is not on `PATH`, then restart the server. PyShark is imported only by the adapter, so missing Wireshark disables ingestion while other dashboard features continue to work.
+
+Start Wireshark on Laptop A's Wi-Fi/Ethernet adapter with capture filter `tcp port 8000`. Run clients from Laptop B so traffic crosses the network. Capture one scenario per file, stop capture, and save `.pcap`/`.pcapng` under `backend/data/pcaps/`, for example `secure_traffic.pcapng`, `plain_baseline.pcapng`, or `login_attempt.pcapng`. The Phase 9 traffic commands (from `backend`) are:
+
+```powershell
+python -m app.bench.traffic --server http://LAPTOP-A-IP:8000 --mode secure --marker SECRETWORD123 --messages 20
+python -m app.bench.traffic --server http://LAPTOP-A-IP:8000 --mode plain --marker SECRETWORD123 --messages 20
+```
+
+Plain mode requires `ALLOW_PLAINTEXT_BASELINE=true` on the server. Select the matching `traffic_*.json` sidecar when ingesting secure/plain traffic. Ingest from analyst **Network > Captures** or run `python -m app.network.ingest <filename> --label L --scenario secure_traffic|plain_baseline|login_attempt|browser_session|tamper_demo|other [--marker M] [--sidecar traffic_name.json] [--server-port 8000] [--replace]`. Filenames are resolved only inside the PCAP directory.
+
+The tabs show capture status, protocol/size/conversation summaries, packet timelines, paginated packets and HTTP transactions, exposure findings, and a two-capture comparison. Exposure counts show whether a supplied marker, JWT-shaped value, or password field appeared in captured traffic; actual secret values are not saved. A visible marker is expected in `plain_baseline`, a failure in `secure_traffic`, and visible credentials are expected in `login_attempt`. Compare uses sidecar message counts where available; packet totals include login, handshake, and WebSocket traffic.
+
+Limitations: PCAPs may contain real credentials/tokens; keep them private and never commit them. Marker scanning detects the byte string in captured TCP payload and is intended for plain HTTP, not TLS. Capture totals include other traffic on the filtered port. Laptop clock differences do not affect within-file durations or totals. PyShark field names vary by Wireshark release, and real capture compatibility depends on the installed version.
+
+### Phase 10 tests and acceptance checks
+
+Run backend tests from the repository root with `.venv\Scripts\python.exe -m pytest backend/app/tests backend/tests -v`, and frontend tests/build with `cd frontend; npm test; npm run build`. The real-PCAP integration test skips with a clear reason when `tshark` is unavailable or `CC_SKIP_INTEGRATION=1` is set. Acceptance checks: pytest and Vitest pass; tshark status enables/disables ingestion correctly without disabling other features; separate secure/plain/login captures ingest and match Wireshark frame counts; marker and credential indicators appear in the expected scenarios while secret values stay out of `network.db`; HTTP classes and comparison deltas/verdict are sensible; Overview, Traffic, filtering and pagination work; duplicate ingestion requires Replace; deleting analysis rows leaves PCAP files; unsafe filenames are rejected and non-analysts receive 403; ingestion audit events preserve the audit chain; and earlier chat, handshake, encryption, tamper, Labs, and Performance acceptance checks continue to pass.
 
 ### Phase 8 tests
 
@@ -356,3 +385,90 @@ cd backend
 10. A recipient cannot post metrics for the sender's image (403); duplicates return 409; extra fields are rejected; mismatched dimensions return `dimension_mismatch`; rejected attempts are audited and audit-chain verification succeeds.
 11. Logging out immediately after a large image send leaves no stale queued metrics post, error spam, or retained job buffers.
 12. Clearing Image Lab data empties its rows/charts and writes the `LAB_DATA_CLEARED` audit event. New image reports work afterward; Text Lab and all prior phase acceptance checks still pass.
+
+## Hashing Lab (Phase 11)
+
+Hashing Lab is available inside Crypto Lab and runs entirely in the analyst's browser using the project's `@noble/hashes` SHA-256 implementation. It makes no network requests, writes no server data, and keeps results in page-session memory only. Candidate messages are enumerated sequentially as a fresh nonce followed by an index; each trial gets its own nonce so runs can be reproduced from the displayed result details.
+
+- **Performance** hashes distinct short messages (`bench-i`) independently. Counts default to 20, 100,000, and 200,000 with five timing samples. Tiny workloads are calibrated by repetition; time should grow roughly linearly while hashes per second remains broadly stable.
+- **Preimage** searches for a message matching a target digest. **Second-preimage** searches for a different message matching the original message's digest. **Collision** searches for any two different messages with the same digest.
+- Full SHA-256 is the default. The configured limits are intentionally far below the expected `2^256` preimage/second-preimage work and about `2^128` collision work, so not finding a match is the expected result.
+- The optional educational mode truncates hashes to 16 bits. Preimages and second-preimages need about `2^16` attempts on average; collisions need about `1.253 × 2^8` attempts due to the birthday effect. This illustrates attack scaling and is not a break of SHA-256.
+- Defaults are 100,000 full-mode attempts, 500,000 demo attempts, 30 seconds per run, and one attack trial. The caps are 5,000,000 attempts, 120 seconds, and 20 trials. Stop aborts the current browser job; changing dashboard tabs preserves saved results until Clear results is selected.
+
+### Phase 11 acceptance tests
+
+Run the suites from the repository root:
+
+```powershell
+$env:PYTHONPATH='backend'; .venv\Scripts\python.exe -m pytest backend\app\tests backend\tests -q
+cd frontend
+npm test
+npm run build
+```
+
+The image metrics initialization adds missing directional correlation columns to an existing `lab.db` without deleting rows. Old image records keep null vertical/diagonal values and are shown as `n/a` with a pre-Phase-11 banner. New image reports include numeric/null correlation fields only; the server stores reported values and computes no image correlation or plaintext statistics.
+
+1. All pytest and Vitest tests pass, including the existing one-megabyte tests with per-test timeout allowances and the new cross-language directional vectors.
+2. Start the application on existing databases. Confirm the old Image Lab rows remain, and eligible rows show `n/a` plus the pre-Phase-11 banner for vertical and diagonal correlation.
+3. Clear Image Lab data and send at least six images including a natural photo and a one-pixel-wide image. Correlation shows Horizontal, Vertical, and Diagonal views. Natural-photo plaintext correlation is generally above 0.8 in all directions; large cipher images generally have `|r| < 0.05`. For a one-pixel-wide image, horizontal and diagonal values are `n/a`, while vertical correlation is numeric when its variance is nonzero.
+4. Inspect an image metrics request: it contains the session UUID and numbers/nulls only, including the new fields.
+5. Run the default hashing performance counts. The 20-item row has a nonzero time; larger runs take proportionally longer with roughly stable throughput; both charts render and the time chart's log toggle works.
+6. In full mode, run each attack with 100,000 attempts. It stops at that limit without success; preimage probability is about `1e-72`.
+7. In 16-bit mode, the educational banner appears for every attack. Preimage and second-preimage find matching prefixes, and second-preimage returns a different message. Collision returns two different messages, the shared prefix, and both full digests.
+8. Run 20 educational trials per attack. The attempts chart compares mean successful attempts with theory: preimages and second-preimages near 65,000, collisions near 320.
+9. Stop cancels promptly; the UI remains responsive; no Hashing Lab network requests appear. Results survive switching dashboard tabs and are removed by Clear results.
+10. Repeat earlier chat, handshake, encrypted text/image, tamper, Text/Image Lab, Security Logs, Network Analysis, and Performance acceptance checks.
+
+## HMAC timing and digital signatures (Phase 12)
+
+### HMAC timing
+
+The sender measures the time to compute the existing HMAC-SHA256 over the canonical encrypted-message envelope. The browser warms up the operation, calibrates a batch to span at least about 2 ms, takes three samples, and reports the median in microseconds. This is client-reported timing, not a server benchmark. The server stores only the timing and plaintext byte length alongside the message; it does not receive the plaintext or symmetric key. The Hashing Lab adds **HMAC Performance** alongside the renamed **SHA-256 Benchmark**. It plots text size against HMAC time and image pixel count against HMAC time, with regression summaries and paged records. Legacy messages without timing metadata are excluded.
+
+### Digital signatures
+
+Each user login and restored page session generates a fresh ECDSA key pair on NIST P-256 (secp256r1). The browser uses `crypto.getRandomValues` through noble-curves to generate a valid 32-byte private scalar and a 65-byte uncompressed SEC1 public point (`0x04 || X(32) || Y(32)`). The private scalar never leaves the browser. `POST /api/keys` sends only `public_key_b64` and `keygen_ms`; the server validates the point, computes its SHA-256 fingerprint, and stores the raw point in the existing `signing_keys.public_key_der` column (the column name is retained to avoid a migration). The displayed fingerprint remains the first 16 lowercase hex characters, grouped into four uppercase groups.
+
+The signed input is exactly `ASCII("CC1-sig") || len4(MAC_INPUT) || MAC_INPUT || len4(HMAC_TAG) || HMAC_TAG`; `MAC_INPUT` remains the existing Phase 4/5 canonical `CC1-msg` envelope input, and lengths are four-byte big-endian. SHA-256 is applied exactly once. Signatures are 64-byte compact `r(32) || s(32)` values, big-endian. Noble-curves produces deterministic RFC 6979 signatures and normalizes signer output to low-S; verification accepts either low-S or high-S values to interoperate with OpenSSL.
+
+The server verifies signatures on upload using only the registered public key, and the recipient independently verifies them. Receive checks run in this order: format, replay, HMAC, signature, decrypt. HMAC provides shared-key integrity; a digital signature binds the encrypted envelope and HMAC tag to the sender's registered signing key. ECDSA P-256 provides about 128-bit security, comparable to RSA-3072. RSA-2048 was replaced because pure-JavaScript RSA key generation was too slow and unpredictable on target browsers, while P-256 key generation completes quickly on plain-HTTP LAN origins. A malicious relay could substitute a public key, so compare displayed fingerprints out of band. JavaScript cannot guarantee wiping private-key bytes from process memory. The server stores `pt_len_bytes`, which leaks message size, and timing values are client-reported and can be inaccurate or fabricated.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/keys` | Register the caller's 65-byte uncompressed P-256 public point for the current login; returns its id and fingerprint. |
+| `GET /api/keys/{id}` | Retrieve a public key and its registry metadata. |
+| `POST /api/messages` | Submit the existing encrypted envelope with its signature and client timing metadata. |
+| `GET /api/messages/{id}` | Return the encrypted message and signature metadata to its recipient. |
+| `POST /api/messages/{id}/verification` | Report the recipient's signature verification result and timing. |
+| `GET /api/dashboard/hmac/records` | Analyst-only HMAC timing records. |
+| `GET /api/dashboard/signatures/records` | Analyst-only signature records and verification status. |
+| `GET /api/dashboard/signatures/keys` | Analyst-only key registry and per-key signed-message counts. |
+
+Startup automatically upgrades the existing `messages` table by adding the seven nullable Phase 12 columns from ORM metadata. The migration is idempotent and preserves old rows. Signing keys whose stored public-key length is not 65 bytes are retired with reason `legacy_algorithm` and never deleted; signature analytics include only messages with 64-byte signatures. The Signature Lab provides Overview, Text, Images, Records, and Keys views. Existing hashing attack tabs and message integrity behavior remain available.
+
+### Phase 12 tests and acceptance checks
+
+Run the backend and frontend suites from the repository root:
+
+```powershell
+$env:PYTHONPATH='backend'; .venv\Scripts\python.exe -m pytest backend\app\tests backend\tests -q
+cd frontend
+npm test
+npm run build
+```
+
+The automated coverage includes Python/TypeScript signature vectors, key registration and retirement, signed text/image message validation, message-table migration, dashboard privacy and paging, calibrated HMAC timing, dashboard aggregation, key generation, and client-side signature behavior. The committed test-vector private key is test-only and must never be used outside tests.
+
+Manual acceptance checks:
+
+1. Start the server against existing databases without deleting them. Confirm old messages and earlier features still work and legacy rows do not appear in the new HMAC or Signature views.
+2. Log in as Alice and Bob in separate tabs. The **Generating your ECDSA P-256 signing keys...** step should finish in well under a second before chat opens; key details should show each signing-key id, fingerprint, and key generation time in milliseconds.
+3. Send text and an image from Alice to Bob. Bob should see **Integrity verified** and **Signature VALID** with verification timing and a 64-byte signature. Alice's Wire view should show signature generation time, HMAC time, and later peer verification. Existing pixel hash and encryption behavior should still work.
+4. Arm the tamper demo. Bob should see `hmac_mismatch`, the signature should be **not checked**, and the Events view should show `TAMPER_DETECTED`.
+5. Confirm a wrong 64-byte signature is rejected with `400 invalid_signature` and an audit event; a truncated or 65-byte signature is rejected with `400 bad_signature_format`; a valid high-S signature is accepted; another user's key id is rejected with `403 wrong_signing_key`; a request without signature fields is rejected with `400 signature_required`.
+6. Inspect all browser network and WebSocket traffic during login, key registration, messaging, and logout. No private key or private-key component should appear; key registration sends only `public_key_b64` and `keygen_ms`.
+7. Log out and back in, then reload. Each session should create a fresh fingerprint; prior keys remain in the registry as retired (`logout` or `replaced`) and old messages retain their original signer key ids.
+8. Send varied text lengths and image sizes. HMAC plots should increase with payload size, while ECDSA signing time should be nearly flat. Signature records should show verification times, valid statuses, and key ids; per-key signed counts should agree with the records.
+9. Confirm legacy 256-byte signing keys stay in the database, are retired with reason `legacy_algorithm`, and their messages are excluded from signature analytics.
+10. Confirm **SHA-256 Benchmark** still works and Phase 11 Attack tabs are unaffected. Repeat prior handshake, encrypted messaging, metrics, hashing, network analysis, and audit-chain checks.

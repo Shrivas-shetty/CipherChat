@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.db.lab_base import get_lab_db
+from app.db.network_base import get_network_db
 from app.db.models import User
 from app.deps import require_role
 from app.services.audit import log_event, verify_chain_detailed
-from app.services.dashboard_queries import event_types, query_logs, query_messages, query_sessions, query_summary
+from app.services.dashboard_queries import event_types, query_hmac_records, query_logs, query_messages, query_perf_handshakes, query_sessions, query_signature_records, query_signing_keys, query_summary
 from app.services.lab_queries import clear_image_metrics, clear_text_metrics, get_cipher_noise_message, query_image_records, query_text_records
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -63,8 +64,31 @@ def sessions(limit: int = Query(50, ge=1), db: Session = Depends(get_db), _: Use
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), lab_db: Session = Depends(get_lab_db), _: User = analyst):
-    return query_summary(db, lab_db)
+def summary(db: Session = Depends(get_db), lab_db: Session = Depends(get_lab_db), network_db: Session = Depends(get_network_db), _: User = analyst):
+    return query_summary(db, lab_db, network_db)
+
+
+@router.get("/hmac/records")
+def hmac_records(limit: int = Query(500, ge=1), before_id: Optional[int] = None,
+                 msg_type: Optional[str] = None, db: Session = Depends(get_db), _: User = analyst):
+    try:
+        return query_hmac_records(db, limit=limit, before_id=before_id, msg_type=msg_type)
+    except ValueError as exc:
+        _bad_query(exc)
+
+
+@router.get("/signatures/records")
+def signature_records(limit: int = Query(500, ge=1), before_id: Optional[int] = None,
+                      msg_type: Optional[str] = None, db: Session = Depends(get_db), _: User = analyst):
+    try:
+        return query_signature_records(db, limit=limit, before_id=before_id, msg_type=msg_type)
+    except ValueError as exc:
+        _bad_query(exc)
+
+
+@router.get("/signatures/keys")
+def signing_keys(limit: int = Query(200, ge=1), db: Session = Depends(get_db), _: User = analyst):
+    return query_signing_keys(db, limit=limit)
 
 
 @router.get("/lab/text/records")
@@ -119,3 +143,8 @@ def clear_image_lab(lab_db: Session = Depends(get_lab_db), user: User = analyst)
 @router.get("/audit-integrity")
 def audit_integrity(db: Session = Depends(get_db), _: User = analyst):
     return verify_chain_detailed(db)
+
+
+@router.get("/perf/handshakes")
+def perf_handshakes(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db), _: User = analyst):
+    return {"items": query_perf_handshakes(db, limit=limit)}

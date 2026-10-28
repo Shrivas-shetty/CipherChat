@@ -5,6 +5,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import get_lab_db_file_path
+from app.db.migrate import ensure_columns
 
 LabBase = declarative_base()
 _lab_file = get_lab_db_file_path()
@@ -30,7 +31,12 @@ def set_lab_engine_and_session(new_engine: Engine) -> None:
 
 def init_lab_db(engine_instance: Optional[Engine] = None) -> None:
     from app.db import lab_models  # noqa: F401
-    LabBase.metadata.create_all(bind=engine_instance or engine)
+    target = engine_instance or engine
+    LabBase.metadata.create_all(bind=target)
+    image_table = LabBase.metadata.tables["image_metrics"]
+    columns = {column.name: column.type.compile(dialect=target.dialect) for column in image_table.columns
+               if column.name.startswith(("corr_v_", "corr_d_"))}
+    ensure_columns(target, "image_metrics", columns)
 
 
 def get_lab_db() -> Generator[Session, None, None]:
