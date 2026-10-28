@@ -26,13 +26,17 @@ def entropy(buf: bytes, channel: int) -> float:
     return -sum((count / len(values)) * math.log2(count / len(values)) for count in counts if count)
 
 
-def corr(buf: bytes, w: int, h: int, channel: int):
-    if w <= 1: return None
+def corr(buf: bytes, w: int, h: int, channel: int, direction: str = "h"):
+    pairs = ((w - 1) * h if direction == "h" else (h - 1) * w if direction == "v" else (h - 1) * (w - 1))
+    if pairs <= 0: return None
     xs, ys = [], []
-    for row in range(h):
-        for col in range(w - 1):
+    rows = h if direction == "h" else h - 1
+    cols = w - 1 if direction in ("h", "d") else w
+    step = 1 if direction == "h" else w if direction == "v" else w + 1
+    for row in range(rows):
+        for col in range(cols):
             i = (row * w + col) * 3 + channel
-            xs.append(buf[i]); ys.append(buf[i + 3])
+            xs.append(buf[i]); ys.append(buf[i + step * 3])
     mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
     dx = [x - mx for x in xs]; dy = [y - my for y in ys]
     vx, vy = sum(x * x for x in dx), sum(y * y for y in dy)
@@ -40,8 +44,8 @@ def corr(buf: bytes, w: int, h: int, channel: int):
     return sum(x * y for x, y in zip(dx, dy)) / (vx * vy) ** 0.5
 
 
-def corr_set(buf: bytes, w: int, h: int):
-    vals = [corr(buf, w, h, c) for c in range(3)]
+def corr_set(buf: bytes, w: int, h: int, direction: str = "h"):
+    vals = [corr(buf, w, h, c, direction) for c in range(3)]
     present = [v for v in vals if v is not None]
     return {**dict(zip(("r", "g", "b"), vals)), "avg": sum(present) / len(present) if present else None}
 
@@ -63,7 +67,7 @@ def make_pixels(w: int, h: int, mode: str) -> bytes:
 
 def make_vectors():
     cases = []
-    for w, h, mode in ((8, 6, "randomish"), (16, 16, "gradient"), (5, 3, "odd"), (4, 4, "constant_g")):
+    for w, h, mode in ((8, 6, "randomish"), (16, 16, "gradient"), (5, 3, "odd"), (4, 4, "constant_g"), (1, 16, "randomish"), (16, 1, "odd")):
         pt = make_pixels(w, h, mode); n = len(pt); ct = encrypt(pt); cipher = ct[:n]
         flips = []
         for index in dict.fromkeys((0, n // 2, n - 1)):
@@ -74,9 +78,12 @@ def make_vectors():
         ent = [entropy(cipher, c) for c in range(3)]; mse_enc = mse(pt, cipher)
         import math
         corr_pt, corr_ct = corr_set(pt, w, h), corr_set(cipher, w, h)
+        corr_v_pt, corr_v_ct = corr_set(pt, w, h, "v"), corr_set(cipher, w, h, "v")
+        corr_d_pt, corr_d_ct = corr_set(pt, w, h, "d"), corr_set(cipher, w, h, "d")
         cases.append({"w": w, "h": h, "pixels_hex": pt.hex(), "ct_hex": ct.hex(), "flip_trials": flips,
             "entropy_r": ent[0], "entropy_g": ent[1], "entropy_b": ent[2], "entropy_avg": sum(ent) / 3,
-            "corr_pt": corr_pt, "corr_ct": corr_ct, "mse_enc": mse_enc,
+            "corr_pt": corr_pt, "corr_ct": corr_ct, "corr_v_pt": corr_v_pt, "corr_v_ct": corr_v_ct,
+            "corr_d_pt": corr_d_pt, "corr_d_ct": corr_d_ct, "mse_enc": mse_enc,
             "psnr_enc": None if mse_enc == 0 else 10 * math.log10(65025 / mse_enc), "mse_dec": 0, "psnr_dec": None})
     return {"key_hex": KEY.hex(), "iv_hex": IV.hex(), "cases": cases}
 

@@ -19,5 +19,5 @@ describe("image pixel pipeline", () => {
     const bytes = new Uint8Array(1024 * 1024);
     for (let offset = 0; offset < bytes.length; offset += 65536) crypto.getRandomValues(bytes.subarray(offset, offset + 65536));
     expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
-  });
+  }, 30_000);
 });

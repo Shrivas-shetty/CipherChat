@@ -1,0 +1,13 @@
+{
+  "mode": "plain",
+  "marker": "SECRETWORD123",
+  "messages": 3,
+  "with_images": true,
+  "server": "http://127.0.0.1:51360",
+  "started_at_utc": "2026-10-18T13:16:23.232659Z",
+  "ended_at_utc": "2026-10-18T13:16:24.109898Z",
+  "local_start": "2026-10-18T18:46:23.232662+05:30",
+  "local_end": "2026-10-18T18:46:24.109901+05:30",
+  "client_host_ip_if_known": "192.168.1.108",
+  "pause_ms": 1
+}

@@ -1,4 +1,4 @@
-# CipherChat (Phase 5)
+# CipherChat — Secure Chat and Security Analysis Lab
 
 Secure two-user chat over a LAN featuring in-browser Diffie-Hellman key exchange, HKDF key derivation, mutual key confirmation, session lifecycle management, and **end-to-end encrypted messaging with AES-256-CBC + HMAC-SHA256 (Encrypt-then-MAC)** over a blind server relay architecture.
 
@@ -82,10 +82,12 @@ CipherChat/
 │   │   │   ├── messages.py   /api/messages (POST send, GET fetch, POST verification)
 │   │   │   ├── health.py     /api/health
 │   │   │   └── ws.py         /ws (WebSocket relay for handshake & message availability)
-│   │   ├── services/         Audit logging with SHA-256 hash chaining & tamper service
+│   │   ├── services/         Audit logging, lab queries, baseline store, network queries
+│   │   ├── bench/            Secure/plain traffic and performance benchmark tools
+│   │   ├── network/          PCAP ingest, PyShark adapter, exposure scanner
 │   │   ├── tests/            Pytest test suites (auth, crypto, session lifecycle, envelope, messages API)
 │   │   └── ws/               ConnectionManager & session coordinator
-│   └── data/                 SQLite database (app.db) and generated jwt_secret
+│   └── data/                 app.db, lab.db, network.db and generated jwt_secret
 ├── frontend/                 Vite + React 19 + TypeScript SPA
 │   └── src/
 │       ├── api/              HTTP client (http.ts) with Bearer token & 401 handler
@@ -104,6 +106,8 @@ CipherChat/
 │       │   ├── sessionKeys.ts Ephemeral in-memory key storage with zeroing
 │       │   ├── handshake.ts  HandshakeRunner client-side state machine
 │       │   └── __tests__/    Vitest test suites verifying envelope & shared vectors
+│       ├── dashboard/        Logs, Crypto Lab (Text/Image/Hashing), Performance and Network
+│       ├── hashlab/          Browser-only SHA-256 experiments (no server requests)
 │       ├── pages/            AuthPage, ChatPage (with Wire View), AnalystPage (with Tamper Panel)
 │       └── ws/               ChatSocket (v1 protocol with DH & message notifications)
 └── shared/
@@ -223,7 +227,7 @@ To demonstrate the Encrypt-then-MAC integrity guarantee:
 
 ## Security Dashboard (Phase 6)
 
-The analyst dashboard is a REST-polled, read-only view of metadata already stored in `app.db`. It provides a summary strip, audit Events, message metadata, session history, audit-chain verification, and the Phase 4 tamper controls. Crypto Lab and Network Analysis are placeholders for later phases.
+The analyst dashboard is a REST-polled view of stored metadata. It provides Security Logs, Crypto Lab (Text, Image, and browser-only Hashing Labs), Performance, Network Analysis, a summary strip, message metadata, session history, audit-chain verification, and tamper controls.
 
 Seed an analyst account from the backend directory, then sign in through the normal page:
 
@@ -318,13 +322,15 @@ Image security experiments run locally in the sender's browser after the encrypt
 | NPCR | Mean percentage of ciphertext-image byte positions changed after flipping one random plaintext RGB byte's least-significant bit in five trials. |
 | UACI | Mean normalized absolute ciphertext byte intensity change for those same trials. |
 | Entropy | Shannon entropy per RGB channel of the first `width × height × 3` ciphertext bytes. |
-| Horizontal correlation | Pearson correlation across every adjacent horizontal pixel pair per channel, for plaintext and cipher image. |
+| Directional correlation | Per-channel Pearson r across every adjacent pair horizontally, vertically, and diagonally down-right, for plaintext and cipher image. |
 | MSE / PSNR | Original vs local decrypted pixels and original vs cipher-image bytes; PSNR is null (infinite) when MSE is zero. |
 | AES timing | Median calibrated browser JavaScript AES-CBC encrypt/decrypt time; no network or image decoding time. |
 
 The baseline re-encryption must exactly match the sent ciphertext or the job aborts. CBC changes a ciphertext block and the suffix after it, while leaving preceding blocks unchanged. Random byte flips therefore average approximately **50% NPCR** and **16.7% UACI**, below the ideal random-cipher references of **99.61%** and **33.46%**. Expected cipher entropy is about `8 - 184/n` bits/channel for `n` pixels; cipher correlation approaches zero while natural-photo plaintext correlation is often high. Correct local decryption yields MSE 0 and infinite PSNR. Natural images commonly produce encrypted-image MSE around 8,000–12,000 and PSNR around 7–10 dB; these are observations, not validation requirements.
 
-The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as horizontal correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
+Directional correlations use every valid pair without sampling: horizontal `(r,k)` to `(r,k+1)`, vertical `(r,k)` to `(r+1,k)`, and diagonal `(r,k)` to `(r+1,k+1)`. Pearson r is computed separately for R, G, and B using two passes; directions with no pairs or zero variance show `n/a`. Natural photos usually have high plaintext correlation (often above 0.8) in all three directions. For cipher images at least 64×64, correlation is expected to be near zero (`|r| < 0.05`). These are empirical expectations, not server-verified guarantees. Image metric columns are upgraded automatically at startup: missing nullable columns are added to the existing `lab.db`, preserving existing rows with null directional values.
+
+The analyst Image Lab computes aggregate values and regressions in the browser. Its encrypted thumbnails and lightbox are generated only from `GET /api/dashboard/lab/image/{message_id}/cipher-noise`, which returns exactly the first `width × height × 3` ciphertext bytes as the noise RGB image. This is the only image-dashboard endpoint that returns ciphertext-derived bytes; records, summaries, and metrics posts contain no ciphertext, IV, HMAC, or keys. Analysts cannot access original or decrypted images by design. The metrics remain client-reported and may be inaccurate or fabricated. Limitations: images are capped at 512 pixels per dimension; dimensions and sizes are visible; derived plaintext statistics such as directional correlation leak limited information; browser timer resolution and scheduling affect timing results; and analyst views intentionally exclude original images.
 
 ## Network analysis (Wireshark / PCAP / PyShark) — Phase 10
 
@@ -379,3 +385,37 @@ cd backend
 10. A recipient cannot post metrics for the sender's image (403); duplicates return 409; extra fields are rejected; mismatched dimensions return `dimension_mismatch`; rejected attempts are audited and audit-chain verification succeeds.
 11. Logging out immediately after a large image send leaves no stale queued metrics post, error spam, or retained job buffers.
 12. Clearing Image Lab data empties its rows/charts and writes the `LAB_DATA_CLEARED` audit event. New image reports work afterward; Text Lab and all prior phase acceptance checks still pass.
+
+## Hashing Lab (Phase 11)
+
+Hashing Lab is available inside Crypto Lab and runs entirely in the analyst's browser using the project's `@noble/hashes` SHA-256 implementation. It makes no network requests, writes no server data, and keeps results in page-session memory only. Candidate messages are enumerated sequentially as a fresh nonce followed by an index; each trial gets its own nonce so runs can be reproduced from the displayed result details.
+
+- **Performance** hashes distinct short messages (`bench-i`) independently. Counts default to 20, 100,000, and 200,000 with five timing samples. Tiny workloads are calibrated by repetition; time should grow roughly linearly while hashes per second remains broadly stable.
+- **Preimage** searches for a message matching a target digest. **Second-preimage** searches for a different message matching the original message's digest. **Collision** searches for any two different messages with the same digest.
+- Full SHA-256 is the default. The configured limits are intentionally far below the expected `2^256` preimage/second-preimage work and about `2^128` collision work, so not finding a match is the expected result.
+- The optional educational mode truncates hashes to 16 bits. Preimages and second-preimages need about `2^16` attempts on average; collisions need about `1.253 × 2^8` attempts due to the birthday effect. This illustrates attack scaling and is not a break of SHA-256.
+- Defaults are 100,000 full-mode attempts, 500,000 demo attempts, 30 seconds per run, and one attack trial. The caps are 5,000,000 attempts, 120 seconds, and 20 trials. Stop aborts the current browser job; changing dashboard tabs preserves saved results until Clear results is selected.
+
+### Phase 11 acceptance tests
+
+Run the suites from the repository root:
+
+```powershell
+$env:PYTHONPATH='backend'; .venv\Scripts\python.exe -m pytest backend\app\tests backend\tests -q
+cd frontend
+npm test
+npm run build
+```
+
+The image metrics initialization adds missing directional correlation columns to an existing `lab.db` without deleting rows. Old image records keep null vertical/diagonal values and are shown as `n/a` with a pre-Phase-11 banner. New image reports include numeric/null correlation fields only; the server stores reported values and computes no image correlation or plaintext statistics.
+
+1. All pytest and Vitest tests pass, including the existing one-megabyte tests with per-test timeout allowances and the new cross-language directional vectors.
+2. Start the application on existing databases. Confirm the old Image Lab rows remain, and eligible rows show `n/a` plus the pre-Phase-11 banner for vertical and diagonal correlation.
+3. Clear Image Lab data and send at least six images including a natural photo and a one-pixel-wide image. Correlation shows Horizontal, Vertical, and Diagonal views. Natural-photo plaintext correlation is generally above 0.8 in all directions; large cipher images generally have `|r| < 0.05`. For a one-pixel-wide image, horizontal and diagonal values are `n/a`, while vertical correlation is numeric when its variance is nonzero.
+4. Inspect an image metrics request: it contains the session UUID and numbers/nulls only, including the new fields.
+5. Run the default hashing performance counts. The 20-item row has a nonzero time; larger runs take proportionally longer with roughly stable throughput; both charts render and the time chart's log toggle works.
+6. In full mode, run each attack with 100,000 attempts. It stops at that limit without success; preimage probability is about `1e-72`.
+7. In 16-bit mode, the educational banner appears for every attack. Preimage and second-preimage find matching prefixes, and second-preimage returns a different message. Collision returns two different messages, the shared prefix, and both full digests.
+8. Run 20 educational trials per attack. The attempts chart compares mean successful attempts with theory: preimages and second-preimages near 65,000, collisions near 320.
+9. Stop cancels promptly; the UI remains responsive; no Hashing Lab network requests appear. Results survive switching dashboard tabs and are removed by Clear results.
+10. Repeat earlier chat, handshake, encrypted text/image, tamper, Text/Image Lab, Security Logs, Network Analysis, and Performance acceptance checks.

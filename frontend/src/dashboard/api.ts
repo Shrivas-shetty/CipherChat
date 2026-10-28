@@ -17,6 +17,10 @@ export type ImageLabRecord = {
   entropy_r: number; entropy_g: number; entropy_b: number; entropy_avg: number;
   corr_pt_r: number | null; corr_pt_g: number | null; corr_pt_b: number | null; corr_pt_avg: number | null;
   corr_ct_r: number | null; corr_ct_g: number | null; corr_ct_b: number | null; corr_ct_avg: number | null;
+  corr_v_pt_r: number | null; corr_v_pt_g: number | null; corr_v_pt_b: number | null; corr_v_pt_avg: number | null;
+  corr_v_ct_r: number | null; corr_v_ct_g: number | null; corr_v_ct_b: number | null; corr_v_ct_avg: number | null;
+  corr_d_pt_r: number | null; corr_d_pt_g: number | null; corr_d_pt_b: number | null; corr_d_pt_avg: number | null;
+  corr_d_ct_r: number | null; corr_d_ct_g: number | null; corr_d_ct_b: number | null; corr_d_ct_avg: number | null;
   mse_dec: number; psnr_dec: number | null; mse_enc: number; psnr_enc: number | null; enc_us: number; dec_us: number; timing_iters: number;
 };
 export type ImageLabPage = { total: number; items: ImageLabRecord[]; has_more_older: boolean; latest_id: number | null };

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import vectors from "../../../../shared/test_vectors/image_metrics.json";
 import { aesCbcDecrypt, aesCbcEncrypt } from "../aes";
 import { computeImageMetrics } from "../imageMetrics";
-import { correlationSet, mse, npcrUaci, psnr, shannonEntropy } from "../pixelStats";
+import { correlationSet, mse, npcrUaci, psnr, shannonEntropy, type Direction } from "../pixelStats";
 
 const bytes = (hex: string) => Uint8Array.from(hex.match(/.{2}/g)?.map((v) => Number.parseInt(v, 16)) ?? []);
 const hex = (value: Uint8Array) => Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -25,11 +25,21 @@ describe("image metrics browser implementation", () => {
       [0, 1, 2].forEach((channel) => close(shannonEntropy(ct.slice(0, n), channel as 0 | 1 | 2, n), [testCase.entropy_r, testCase.entropy_g, testCase.entropy_b][channel]));
       const ptCorr = correlationSet(pixels, testCase.w, testCase.h), ctCorr = correlationSet(ct.slice(0, n), testCase.w, testCase.h);
       for (const keyName of ["r", "g", "b", "avg"] as const) { close(ptCorr[keyName], testCase.corr_pt[keyName]); close(ctCorr[keyName], testCase.corr_ct[keyName]); }
+      for (const dir of ["v", "d"] as const) {
+        const ptDirectional = correlationSet(pixels, testCase.w, testCase.h, dir), ctDirectional = correlationSet(ct.slice(0, n), testCase.w, testCase.h, dir);
+        const vectorPt = dir === "v" ? testCase.corr_v_pt : testCase.corr_d_pt, vectorCt = dir === "v" ? testCase.corr_v_ct : testCase.corr_d_ct;
+        for (const keyName of ["r", "g", "b", "avg"] as const) { close(ptDirectional[keyName], vectorPt[keyName]); close(ctDirectional[keyName], vectorCt[keyName]); }
+      }
       const mseEnc = mse(pixels, ct, n); close(mseEnc, testCase.mse_enc); close(psnr(mseEnc), testCase.psnr_enc);
       const result = await computeImageMetrics({ w: testCase.w, h: testCase.h, key, iv, pixels, ct }, { ...timingDeps, rng: () => 0.41 });
       expect(result.mse_dec).toBe(0); expect(result.psnr_dec).toBeNull();
       expect(result.npcr_trial_pcts).toHaveLength(5); expect(result.uaci_trial_pcts).toHaveLength(5);
       expect(result.flip_byte_idx.every((i) => i >= 0 && i < n)).toBe(true);
+      for (const dir of ["v", "d"] as const satisfies readonly Direction[]) {
+        const prefix = dir === "v" ? "corr_v_" : "corr_d_";
+        const expectedPt = dir === "v" ? testCase.corr_v_pt : testCase.corr_d_pt, expectedCt = dir === "v" ? testCase.corr_v_ct : testCase.corr_d_ct;
+        for (const channel of ["r", "g", "b", "avg"] as const) { close(result[`${prefix}pt_${channel}` as keyof typeof result] as number | null, expectedPt[channel]); close(result[`${prefix}ct_${channel}` as keyof typeof result] as number | null, expectedCt[channel]); }
+      }
       expect([...result.npcr_trial_pcts, ...result.uaci_trial_pcts].every((v) => v >= 0 && v <= 100)).toBe(true);
       ct.fill(0);
     }
@@ -80,5 +90,15 @@ describe("image metrics browser implementation", () => {
     let yields = 0; clock = 0; const started = Date.now();
     const result = await computeImageMetrics({ w, h, pixels, key, iv, ct }, { ...timingDeps, rng: () => .37, yieldFn: async () => { yields += 1; } });
     expect(Date.now() - started).toBeLessThan(20_000); expect(yields).toBeGreaterThanOrEqual(5); expect(result.n_pixels).toBe(512 * 512);
+  });
+
+  it("serializes image reports as numbers or null only", async () => {
+    const pixels = new Uint8Array([2, 4, 6]), key = new Uint8Array(32).fill(2), iv = new Uint8Array(16).fill(3), ct = aesCbcEncrypt(key, iv, pixels);
+    const result = await computeImageMetrics({ w: 1, h: 1, pixels, key, iv, ct }, { ...timingDeps, rng: () => .2 });
+    const payload = { ...result, message_id: 1, session_id: "00000000-0000-0000-0000-000000000001" };
+    const visit = (value: unknown): boolean => value === null || typeof value === "number" || (Array.isArray(value) ? value.every(visit) : typeof value === "object" && value !== null && Object.entries(value).every(([k, v]) => k === "session_id" ? typeof v === "string" : visit(v)));
+    expect(visit(payload)).toBe(true);
+    const json = JSON.stringify(payload);
+    for (const secret of [hex(pixels), hex(ct), hex(iv), hex(key), btoa(String.fromCharCode(...ct)), btoa(String.fromCharCode(...iv)), btoa(String.fromCharCode(...key))]) expect(json).not.toContain(secret);
   });
 });

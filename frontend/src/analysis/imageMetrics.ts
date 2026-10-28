@@ -1,6 +1,6 @@
 import { aesCbcDecrypt, aesCbcEncrypt } from "./aes";
 import { NPCR_TRIALS } from "./config";
-import { correlationSet, mse, npcrUaci, psnr, shannonEntropy } from "./pixelStats";
+import { correlationSet, mse, npcrUaci, psnr, shannonEntropy, type CorrelationSet, type Direction } from "./pixelStats";
 import { uniformInt } from "./rng";
 import { measureMedianUs } from "./timing";
 import { MetricsAbort, MetricsFailure } from "./textMetrics";
@@ -12,6 +12,10 @@ export type ImageMetricsResult = {
   entropy_r: number; entropy_g: number; entropy_b: number; entropy_avg: number;
   corr_pt_r: number | null; corr_pt_g: number | null; corr_pt_b: number | null; corr_pt_avg: number | null;
   corr_ct_r: number | null; corr_ct_g: number | null; corr_ct_b: number | null; corr_ct_avg: number | null;
+  corr_v_pt_r: number | null; corr_v_pt_g: number | null; corr_v_pt_b: number | null; corr_v_pt_avg: number | null;
+  corr_v_ct_r: number | null; corr_v_ct_g: number | null; corr_v_ct_b: number | null; corr_v_ct_avg: number | null;
+  corr_d_pt_r: number | null; corr_d_pt_g: number | null; corr_d_pt_b: number | null; corr_d_pt_avg: number | null;
+  corr_d_ct_r: number | null; corr_d_ct_g: number | null; corr_d_ct_b: number | null; corr_d_ct_avg: number | null;
   mse_dec: number; psnr_dec: number | null; mse_enc: number; psnr_enc: number | null;
   enc_us: number; dec_us: number; timing_iters: number;
 };
@@ -55,9 +59,14 @@ export async function computeImageMetrics(input: ImageMetricsInput, deps: ImageM
     }
 
     const entropy = [0, 1, 2].map((c) => shannonEntropy(cipher, c as 0 | 1 | 2, n));
-    const cipherCorrelation = correlationSet(cipher, input.w, input.h);
-    const plainCorrelation = correlationSet(pixels, input.w, input.h);
-    await yieldStep();
+    const correlations: Record<string, CorrelationSet> = {};
+    for (const dir of ["h", "v", "d"] as Direction[]) {
+      correlations[`pt_${dir}`] = correlationSet(pixels, input.w, input.h, dir);
+      await yieldStep();
+      correlations[`ct_${dir}`] = correlationSet(cipher, input.w, input.h, dir);
+      await yieldStep();
+    }
+    const ptH = correlations.pt_h, ctH = correlations.ct_h, ptV = correlations.pt_v, ctV = correlations.ct_v, ptD = correlations.pt_d, ctD = correlations.ct_d;
     const mseEnc = mse(pixels, cipher, n), psnrEnc = psnr(mseEnc);
     await yieldStep();
     let decoded: Uint8Array;
@@ -77,8 +86,12 @@ export async function computeImageMetrics(input: ImageMetricsInput, deps: ImageM
       npcr_trials: NPCR_TRIALS, npcr_pct: mean(npcrPcts), npcr_trial_pcts: npcrPcts, npcr_changed_counts: changedCounts,
       uaci_pct: mean(uaciPcts), uaci_trial_pcts: uaciPcts, flip_byte_idx: flipByteIdx,
       entropy_r: entropy[0], entropy_g: entropy[1], entropy_b: entropy[2], entropy_avg: mean(entropy),
-      corr_pt_r: plainCorrelation.r, corr_pt_g: plainCorrelation.g, corr_pt_b: plainCorrelation.b, corr_pt_avg: plainCorrelation.avg,
-      corr_ct_r: cipherCorrelation.r, corr_ct_g: cipherCorrelation.g, corr_ct_b: cipherCorrelation.b, corr_ct_avg: cipherCorrelation.avg,
+      corr_pt_r: ptH.r, corr_pt_g: ptH.g, corr_pt_b: ptH.b, corr_pt_avg: ptH.avg,
+      corr_ct_r: ctH.r, corr_ct_g: ctH.g, corr_ct_b: ctH.b, corr_ct_avg: ctH.avg,
+      corr_v_pt_r: ptV.r, corr_v_pt_g: ptV.g, corr_v_pt_b: ptV.b, corr_v_pt_avg: ptV.avg,
+      corr_v_ct_r: ctV.r, corr_v_ct_g: ctV.g, corr_v_ct_b: ctV.b, corr_v_ct_avg: ctV.avg,
+      corr_d_pt_r: ptD.r, corr_d_pt_g: ptD.g, corr_d_pt_b: ptD.b, corr_d_pt_avg: ptD.avg,
+      corr_d_ct_r: ctD.r, corr_d_ct_g: ctD.g, corr_d_ct_b: ctD.b, corr_d_ct_avg: ctD.avg,
       mse_dec: mseDec, psnr_dec: psnrDec, mse_enc: mseEnc, psnr_enc: psnrEnc,
       enc_us: encTiming.medianUs, dec_us: decTiming.medianUs, timing_iters: encTiming.iters,
     };

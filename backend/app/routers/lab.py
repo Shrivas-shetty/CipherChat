@@ -83,6 +83,22 @@ class ImageMetricRequest(BaseModel):
     corr_ct_g: StrictFloat | None
     corr_ct_b: StrictFloat | None
     corr_ct_avg: StrictFloat | None
+    corr_v_pt_r: StrictFloat | None = None
+    corr_v_pt_g: StrictFloat | None = None
+    corr_v_pt_b: StrictFloat | None = None
+    corr_v_pt_avg: StrictFloat | None = None
+    corr_v_ct_r: StrictFloat | None = None
+    corr_v_ct_g: StrictFloat | None = None
+    corr_v_ct_b: StrictFloat | None = None
+    corr_v_ct_avg: StrictFloat | None = None
+    corr_d_pt_r: StrictFloat | None = None
+    corr_d_pt_g: StrictFloat | None = None
+    corr_d_pt_b: StrictFloat | None = None
+    corr_d_pt_avg: StrictFloat | None = None
+    corr_d_ct_r: StrictFloat | None = None
+    corr_d_ct_g: StrictFloat | None = None
+    corr_d_ct_b: StrictFloat | None = None
+    corr_d_ct_avg: StrictFloat | None = None
     mse_dec: StrictFloat
     psnr_dec: StrictFloat | None
     mse_enc: StrictFloat
@@ -107,6 +123,7 @@ def _check_image_ranges(req: ImageMetricRequest) -> str | None:
     pcts = [req.npcr_pct, req.uaci_pct, *req.npcr_trial_pcts, *req.uaci_trial_pcts]
     correlations = [req.corr_pt_r, req.corr_pt_g, req.corr_pt_b, req.corr_pt_avg,
                     req.corr_ct_r, req.corr_ct_g, req.corr_ct_b, req.corr_ct_avg]
+    correlations += [getattr(req, name) for name in ImageMetricRequest.model_fields if name.startswith(("corr_v_", "corr_d_"))]
     psnrs = [req.psnr_dec, req.psnr_enc]
     if (any(not 0 <= value <= 100 for value in pcts)
             or any(not 0 <= value <= req.pt_len_bytes for value in req.npcr_changed_counts)
@@ -121,6 +138,14 @@ def _check_image_ranges(req: ImageMetricRequest) -> str | None:
     if ((req.psnr_dec is None) != (req.mse_dec == 0) or (req.psnr_enc is None) != (req.mse_enc == 0)):
         return "psnr_inconsistent"
     return None
+
+
+def _correlation_dimensions_consistent(req: ImageMetricRequest, width: int, height: int) -> bool:
+    if height == 1 and any(getattr(req, name) is not None for name in ImageMetricRequest.model_fields if name.startswith(("corr_v_", "corr_d_"))):
+        return False
+    if width == 1 and any(getattr(req, name) is not None for name in ("corr_pt_r", "corr_pt_g", "corr_pt_b", "corr_pt_avg", "corr_ct_r", "corr_ct_g", "corr_ct_b", "corr_ct_avg", *[name for name in ImageMetricRequest.model_fields if name.startswith("corr_d_")])):
+        return False
+    return True
 
 
 def _reject(reason: str, message_id: int, status_code: int = 400, user_id: int | None = None):
@@ -236,6 +261,8 @@ async def post_image_metrics(
         _reject("dimension_mismatch", payload.message_id, user_id=user.id)
     if payload.width != width or payload.height != height:
         _reject("dimension_mismatch", payload.message_id, user_id=user.id)
+    if not _correlation_dimensions_consistent(payload, width, height):
+        _reject("corr_inconsistent", payload.message_id, user_id=user.id)
     if (payload.n_pixels != width * height or payload.pt_len_bytes != width * height * 3
             or payload.ct_len_bytes != len(message.ct) or len(message.ct) != expected_ct_len):
         _reject("length_inconsistent", payload.message_id, user_id=user.id)

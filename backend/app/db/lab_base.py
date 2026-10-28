@@ -30,7 +30,28 @@ def set_lab_engine_and_session(new_engine: Engine) -> None:
 
 def init_lab_db(engine_instance: Optional[Engine] = None) -> None:
     from app.db import lab_models  # noqa: F401
-    LabBase.metadata.create_all(bind=engine_instance or engine)
+    target = engine_instance or engine
+    LabBase.metadata.create_all(bind=target)
+    image_table = LabBase.metadata.tables["image_metrics"]
+    columns = {column.name: column.type.compile(dialect=target.dialect) for column in image_table.columns
+               if column.name.startswith(("corr_v_", "corr_d_"))}
+    ensure_columns(target, "image_metrics", columns)
+
+
+def ensure_columns(engine: Engine, table_name: str, columns: dict[str, str]) -> None:
+    """Idempotently add nullable SQLite columns while preserving existing rows."""
+    from sqlalchemy import inspect
+    from sqlalchemy.sql import quoted_name
+    if not inspect(engine).has_table(table_name):
+        return
+    with engine.begin() as connection:
+        present = {row["name"] for row in inspect(connection).get_columns(table_name)}
+        preparer = engine.dialect.identifier_preparer
+        table = preparer.quote(quoted_name(table_name, True))
+        for name, sql_type in columns.items():
+            if name not in present:
+                column = preparer.quote(quoted_name(name, True))
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
 
 
 def get_lab_db() -> Generator[Session, None, None]:

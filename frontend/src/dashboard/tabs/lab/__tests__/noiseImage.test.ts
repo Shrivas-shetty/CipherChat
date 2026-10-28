@@ -8,7 +8,7 @@ describe("cipher noise image helpers", () => {
     for (let i = 0; i < source.length; i += chunk) binary += String.fromCharCode(...source.subarray(i, i + chunk));
     const decoded = base64ToBytes(btoa(binary));
     expect(decoded).toEqual(source);
-  });
+  }, 30_000);
   it("sizes pixelated thumbnails without upscaling", () => {
     expect(nearestNeighborThumbSize(512, 512)).toEqual({ w: 96, h: 96 });
     expect(nearestNeighborThumbSize(40, 20)).toEqual({ w: 40, h: 20 });

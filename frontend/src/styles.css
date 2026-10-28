@@ -869,3 +869,13 @@ body {
 .noise-lightbox-content > button { position: sticky; float: right; top: 0; }
 .noise-native-scroll { max-width: calc(95vw - 3rem); max-height: calc(82vh - 5rem); overflow: auto; background: #e2e8f0; }
 .noise-native-scroll canvas { display: block; width: auto; height: auto; max-width: none; image-rendering: pixelated; }
+.hashing-lab { display: grid; gap: .75rem; margin-top: .75rem; }
+.hash-settings { display: flex; align-items: end; flex-wrap: wrap; gap: .65rem; }
+.hash-settings label { display: grid; gap: .25rem; }
+.hash-settings input, .hash-settings select, .hashing-lab textarea { min-width: 140px; padding: .4rem; }
+.hashing-lab textarea { width: 100%; min-height: 5rem; }
+.hash-warning { padding: .8rem 1rem; color: #713f12; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 7px; }
+.hash-chart { width: 100%; height: 300px; }
+.hash-settings progress { width: 100%; }
+.hash-mode-badge { display: inline-block; padding: .1rem .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: .72rem; white-space: nowrap; }
+.hash-found { color: #047857; font-weight: 700; }
