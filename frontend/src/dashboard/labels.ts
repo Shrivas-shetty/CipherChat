@@ -1,4 +1,4 @@
-export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "keys", "demo", "network"] as const;
+export const DASHBOARD_CATEGORIES = ["all", "auth", "session", "message", "keys", "demo", "network", "compare"] as const;
 
 export function eventLabel(eventType: string, details?: Record<string, unknown> | null): string {
   switch (eventType) {
@@ -28,6 +28,9 @@ export function eventLabel(eventType: string, details?: Record<string, unknown> 
     case "NETWORK_INGEST_DONE": return "Capture ingestion completed";
     case "NETWORK_INGEST_FAILED": return "Capture ingestion FAILED";
     case "NETWORK_CAPTURE_DELETED": return "Capture data deleted";
+    case "COMPARE_RUN_COMPLETED": return "Secure vs unsecured comparison completed";
+    case "COMPARE_DATA_CLEARED": return "Comparison benchmark data cleared";
+    case "COMPARE_REJECTED": return "Comparison benchmark rejected";
     default: return eventType.toLowerCase().split("_").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   }
 }

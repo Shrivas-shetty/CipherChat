@@ -19,6 +19,8 @@ describe("dashboard labels", () => {
       ["NETWORK_INGEST_DONE", "Capture ingestion completed"],
       ["NETWORK_INGEST_FAILED", "Capture ingestion FAILED"],
       ["NETWORK_CAPTURE_DELETED", "Capture data deleted"],
+      ["COMPARE_RUN_COMPLETED", "Secure vs unsecured comparison completed"],
+      ["COMPARE_DATA_CLEARED", "Comparison benchmark data cleared"],
     ];
     for (const [type, expected, details] of cases) expect(eventLabel(type, details)).toBe(expected);
     expect(eventLabel("LAB_DATA_CLEARED", { table: "image_metrics" })).toBe("Lab data cleared (image metrics)");
@@ -35,5 +37,6 @@ describe("dashboard labels", () => {
     expect(new Set(DASHBOARD_CATEGORIES).size).toBe(DASHBOARD_CATEGORIES.length);
     expect(DASHBOARD_CATEGORIES).not.toContain("lab");
     expect(DASHBOARD_CATEGORIES).toContain("network");
+    expect(DASHBOARD_CATEGORIES).toContain("compare");
   });
 });

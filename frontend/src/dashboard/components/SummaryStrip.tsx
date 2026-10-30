@@ -22,6 +22,7 @@ export function SummaryStrip() {
       <div><small>Text metrics</small><b>{data.lab.text_records}</b></div>
       <div><small>Image metrics</small><b>{data.lab.image_records}</b></div>
       <div><small>Captures</small><b>{data.network.captures}</b></div>
+      <div><small>Comparison runs</small><b>{data.compare.runs}</b></div>
     </div>}
   </section>;
 }

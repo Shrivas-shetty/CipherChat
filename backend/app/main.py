@@ -15,7 +15,7 @@ from app.db.lab_base import init_lab_db
 from app.db.network_base import init_network_db, NetworkSessionLocal
 from app.db.network_models import PcapFile
 from sqlalchemy import update
-from app.routers import admin, auth, baseline, bench, dashboard, health, lab, messages, network, ws, keys
+from app.routers import admin, auth, baseline, bench, compare, dashboard, health, lab, messages, network, ws, keys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +29,14 @@ async def lifespan(application: FastAPI):
         logging.getLogger(__name__).warning("Plaintext baseline endpoints are ENABLED (benchmark use only)")
     init_db()
     init_lab_db()
+    from app.db.lab_base import LabSessionLocal
+    from app.db.lab_models import CompareRun
+    from app.db.models import utc_now
+    with LabSessionLocal() as lab_db:
+        lab_db.query(CompareRun).filter(CompareRun.status == "running").update(
+            {CompareRun.status: "aborted", CompareRun.finished_at: utc_now()},
+            synchronize_session=False)
+        lab_db.commit()
     config.get_pcap_dir()
     init_network_db()
     with NetworkSessionLocal() as network_db:
@@ -88,6 +96,21 @@ def create_app() -> FastAPI:
             raw_length = request.headers.get("content-length", "")
             if raw_length.isdigit() and int(raw_length) > 1_200_000:
                 return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if request.method == "POST" and request.url.path == "/api/dashboard/compare/runs":
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 16_384) or len(body) > 16_384:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if request.method == "POST" and request.url.path.endswith("/exchanges"):
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 65_536) or len(body) > 65_536:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if request.method == "POST" and request.url.path.endswith("/finalize"):
+            raw_length = request.headers.get("content-length", "")
+            body = await request.body()
+            if (raw_length.isdigit() and int(raw_length) > 262_144) or len(body) > 262_144:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
         if request.method == "POST" and request.url.path in {"/api/lab/text-metrics", "/api/lab/image-metrics"}:
             raw_length = request.headers.get("content-length", "")
             body = await request.body()
@@ -100,6 +123,7 @@ def create_app() -> FastAPI:
     application.include_router(keys.router)
     application.include_router(messages.router)
     application.include_router(baseline.router)
+    application.include_router(compare.router)
     application.include_router(admin.router)
     application.include_router(dashboard.router)
     application.include_router(bench.router)

@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models import AuditLog, ChatSession, Message, SigningKey, User, to_iso_z, utc_now
-from app.db.lab_models import BenchRun, ImageMetric, TextMetric
+from app.db.lab_models import BenchRun, CompareRun, ImageMetric, TextMetric
 from app.db.network_models import PcapFile
 from app.image import ImageFormatError, parse_image_meta
 from app.ws.manager import manager
@@ -19,6 +19,7 @@ EVENT_CATEGORIES: dict[str, list[str]] = {
     "demo": ["TAMPER_ARMED", "TAMPER_DISARMED", "TAMPER_APPLIED", "BASELINE_PLAINTEXT_USED"],
     "lab": ["METRICS_REJECTED", "LAB_DATA_CLEARED", "BENCH_RUN_RECORDED"],
     "network": ["NETWORK_INGEST_STARTED", "NETWORK_INGEST_DONE", "NETWORK_INGEST_FAILED", "NETWORK_CAPTURE_DELETED"],
+    "compare": ["COMPARE_RUN_STARTED", "COMPARE_RUN_COMPLETED", "COMPARE_DATA_CLEARED"],
 }
 SEVERITIES = ["info", "warning", "alert"]
 _ALL_CATEGORIZED = {event for events in EVENT_CATEGORIES.values() for event in events}
@@ -234,6 +235,7 @@ def query_summary(db: Session, lab_db: Optional[Session] = None, network_db: Opt
             "bench_runs": (lab_db.query(func.count(BenchRun.id)).scalar() or 0) if lab_db is not None else 0,
         },
         "network": {"captures": (network_db.query(func.count(PcapFile.id)).scalar() or 0) if network_db is not None else 0},
+        "compare": {"runs": (lab_db.query(func.count(CompareRun.id)).scalar() or 0) if lab_db is not None else 0},
     }
 
 

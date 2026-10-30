@@ -29,6 +29,11 @@ export function setOnUnauthorized(listener: UnauthorizedListener | null): void {
   unauthorizedListener = listener;
 }
 
+export function handleUnauthorized(message = "Session expired, please log in again"): void {
+  clearSession();
+  unauthorizedListener?.(message);
+}
+
 export type RequestOptions = RequestInit & {
   token?: string;
   skipAuth?: boolean;
@@ -62,9 +67,8 @@ export async function requestJson<T>(
   });
 
   if (res.status === 401 && !skipUnauthorizedHandling) {
-    clearSession();
     const sessionExpiredMsg = "Session expired, please log in again";
-    unauthorizedListener?.(sessionExpiredMsg);
+    handleUnauthorized(sessionExpiredMsg);
     throw new ApiError(401, sessionExpiredMsg);
   }
 

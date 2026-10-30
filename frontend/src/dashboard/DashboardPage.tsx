@@ -7,8 +7,9 @@ import { CryptoLabTab } from "./tabs/CryptoLabTab";
 import { LogsTab } from "./tabs/LogsTab";
 import { NetworkTab } from "./tabs/NetworkTab";
 import { PerformanceTab } from "./perf/PerformanceTab";
+import { CompareTab } from "./tabs/compare/CompareTab";
 
-type Tab = "logs" | "crypto" | "network" | "performance";
+type Tab = "logs" | "crypto" | "network" | "performance" | "compare";
 export function DashboardPage() {
   const { user, logout } = useAuth();
   const [tab, setTab] = useState<Tab>("logs");
@@ -16,7 +17,7 @@ export function DashboardPage() {
     <header className="dashboard-header"><div><h1>CipherChat Security Dashboard</h1><p>Logged in as {user?.username}</p></div><button className="btn secondary" onClick={() => void logout()}>Logout</button></header>
     <SummaryStrip />
     <div className="dash-tools"><DemoControls /><AuditIntegrity /></div>
-    <nav className="dash-tabs">{([ ["logs", "Security Logs"], ["crypto", "Crypto Lab"], ["network", "Network Analysis"], ["performance", "Performance"] ] as const).map(([value, label]) => <button key={value} className={tab === value ? "selected" : ""} onClick={() => setTab(value)}>{label}</button>)}</nav>
-    {tab === "logs" ? <LogsTab /> : tab === "crypto" ? <CryptoLabTab /> : tab === "performance" ? <PerformanceTab /> : <NetworkTab />}
+    <nav className="dash-tabs">{([ ["logs", "Security Logs"], ["crypto", "Crypto Lab"], ["network", "Network Analysis"], ["performance", "Performance"], ["compare", "Secure vs Unsecured"] ] as const).map(([value, label]) => <button key={value} className={tab === value ? "selected" : ""} onClick={() => setTab(value)}>{label}</button>)}</nav>
+    {tab === "logs" ? <LogsTab /> : tab === "crypto" ? <CryptoLabTab /> : tab === "performance" ? <PerformanceTab /> : tab === "compare" ? <CompareTab /> : <NetworkTab />}
   </main>;
 }

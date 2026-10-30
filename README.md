@@ -249,7 +249,7 @@ Use a separate browser tab or profile for each account. Authentication uses `ses
 
 Every dashboard endpoint requires the analyst role. Reads do not append audit rows. The dashboard follows the blind-relay rule: it shows metadata needed for monitoring, but never password hashes, JWTs or token `jti` values, DH public values, ciphertext, IVs, HMAC blobs, keys, plaintext, or decrypted images. Image dimensions, message sizes, timestamps, participants, status and the agreed fingerprint are visible metadata; message contents and keys remain in the users' browsers.
 
-Audit event categories are defined by the backend and served through `/api/dashboard/logs/types`: **auth**, **session**, **message**, **demo**, and **lab**. Events outside those sets are categorized as **other**. Severity filters support info, warning, and alert.
+Audit event categories are defined by the backend and served through `/api/dashboard/logs/types`: **auth**, **session**, **message**, **keys**, **demo**, **lab**, **network**, and **compare**. Events outside those sets are categorized as **other**. Severity filters support info, warning, and alert.
 
 ### Phase 6 acceptance checks
 
@@ -472,3 +472,47 @@ Manual acceptance checks:
 8. Send varied text lengths and image sizes. HMAC plots should increase with payload size, while ECDSA signing time should be nearly flat. Signature records should show verification times, valid statuses, and key ids; per-key signed counts should agree with the records.
 9. Confirm legacy 256-byte signing keys stay in the database, are retired with reason `legacy_algorithm`, and their messages are excluded from signature analytics.
 10. Confirm **SHA-256 Benchmark** still works and Phase 11 Attack tabs are unaffected. Repeat prior handshake, encrypted messaging, metrics, hashing, network analysis, and audit-chain checks.
+
+## Secure vs Unsecured comparison benchmark (Phase 13 backend)
+
+The analyst-only comparison API persists browser-run, loopback benchmark data in three `lab.db` tables: `cmp_runs`, `cmp_exchanges`, and `cmp_trials`. The tables use a `cmp_` prefix and are independent of the legacy `bench_runs` / `bench_samples` tables and `/api/dashboard/bench` routes. Run inputs and unsecured exchange text are stored in clear text; secured exchange rows store the encrypted envelope and signature. Only the ECDSA public key and its SHA-256 fingerprint are recorded. DH secrets, symmetric keys, and ECDSA private keys are not accepted or persisted.
+
+The server is deliberately not the benchmark's cryptographic verifier. Both modes use the same POST exchange and GET exchange endpoints, with equivalent mode-specific field validation; the upload stores a row and the retrieval returns it. The server performs no HMAC checking, signature verification, or decryption on these timed paths. A single `running` run is permitted; runs left running for over 15 minutes are marked aborted when a new run is started, and startup marks interrupted runs aborted. Completed and stopped measurements persist across analyst logins and server restarts.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/dashboard/compare/runs` | Create a run and record setup timings and public signing-key metadata. |
+| `POST /api/dashboard/compare/runs/{id}/exchanges` | Store one secured envelope or one unsecured plaintext exchange. |
+| `GET /api/dashboard/compare/runs/{id}/exchanges/{exchange_id}` | Retrieve the stored exchange for the client-side round trip. |
+| `POST /api/dashboard/compare/runs/{id}/finalize` | Validate and persist trial measurements; audit successful completion. |
+| `POST /api/dashboard/compare/runs/{id}/abort` | Mark a running run aborted. |
+| `GET /api/dashboard/compare/runs` and `GET /api/dashboard/compare/runs/{id}` | List runs or retrieve one run and its measurements. |
+| `GET /api/dashboard/compare/runs/{id}/exchanges` | List stored exchange previews without returning full ciphertext. |
+| `GET /api/dashboard/compare/history` | Return completed/stopped measurements for browser-side history summaries. |
+| `DELETE /api/dashboard/compare/runs/{id}` and `DELETE /api/dashboard/compare/runs` | Delete one run or all comparison data; active runs cannot be deleted. |
+
+All routes require the analyst role. `COMPARE_RUN_STARTED`, `COMPARE_RUN_COMPLETED`, and `COMPARE_DATA_CLEARED` are added to the audit category mapping. Finalization checks segment totals, nested secured subtimings, exchange references, mode-specific null fields, and plaintext/ciphertext lengths. The server computes no benchmark statistics; those are derived from persisted trial values by the client.
+
+Backend coverage is in `backend/app/tests/test_compare_api.py` and `backend/app/tests/test_compare_fairness.py`. Run it with the complete backend suites from the repository root:
+
+```powershell
+$env:PYTHONPATH='backend'
+.venv\Scripts\python.exe -m pytest backend\app\tests backend\tests -q
+```
+
+The benchmark compares browser-side loopback processing and payload bodies, not production server-side signature verification. HTTP headers are outside the endpoint's body-size measurements. As a browser-timed benchmark, results depend on timer resolution and device load; realistic LAN comparisons require opening the analyst dashboard on one laptop against a server running on another. The benchmark's temporary DH keys are separate from chat users' handshake keys. A PCAP of a run can optionally be ingested through the Phase 10 capture workflow; the unsecured mode intentionally exposes its message text to anyone who can inspect that traffic.
+
+### Phase 13 frontend
+
+The **Secure vs Unsecured** analyst tab includes **Run & Analysis**, **Stored Data**, and **History**. It runs a same-browser client loopback benchmark. Each measured pair submits the same UTF-8 message in alternating order: secured mode performs AES-CBC/HMAC sealing, P-256 signing, storage/retrieval, format/replay/HMAC/signature checks, and decryption; unsecured mode stores and returns the selected text. Both use matching POST and GET routes. Warm-up pairs are excluded from finalized measurements; timing is split into preparation, POST, GET, and finish segments. Request and response body sizes count UTF-8 JSON bytes and exclude HTTP headers.
+
+The browser computes means, medians, nearest-rank p95, sample standard deviation, and min/max from stored client measurements. The backend stores measurement rows and computes no statistics. Temporary DH, HKDF, AES/HMAC, and signing private-key material stays in the browser and is cleared when the run ends; browser memory wiping is best effort. The run input and unsecured exchanges are intentionally stored as plaintext in `lab.db`, so use synthetic non-sensitive demo text. Client timing values are untrusted and may vary with device load, timer resolution, network, browser, and server contention. Stop completes the current pair and saves completed pairs; leaving the tab aborts the active run.
+
+Frontend coverage is in `frontend/src/compare/__tests__/compare.test.ts`, `frontend/src/compare/__tests__/modes.test.ts`, and `frontend/src/dashboard/__tests__/labels.test.ts`. Run frontend verification from `frontend/`:
+
+```powershell
+npm test
+npm run build
+```
+
+See [Phase 13 acceptance checks](docs/phase13-acceptance.md) for hands-on checks.

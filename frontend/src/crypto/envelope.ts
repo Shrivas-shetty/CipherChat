@@ -206,14 +206,11 @@ export function encryptImage(
   return { session_id: sessionId.trim().toLowerCase(), sender_role: senderRole, counter, msg_type: "image", meta_json: meta, iv, ct, hmac: hmac(sha256, kMac, macIn) };
 }
 
-export function verifyEnvelopeHmac(
-  kMac: Uint8Array,
+export function validateEnvelopeFormat(
   sessionId: string,
   senderRole: "I" | "R",
-  envelope: Envelope,
-  lastCounter: number
-): Uint8Array {
-  // 1. Format checks
+  envelope: Envelope
+): void {
   if (
     !envelope.iv ||
     envelope.iv.length !== 16 ||
@@ -232,13 +229,14 @@ export function verifyEnvelopeHmac(
   ) {
     throw new EnvelopeError("bad_format");
   }
+}
 
-  // 2. Replay check
-  if (envelope.counter <= lastCounter) {
-    throw new EnvelopeError("replay");
-  }
-
-  // 3. HMAC verification (MUST verify before decrypting)
+export function verifyEnvelopeMac(
+  kMac: Uint8Array,
+  sessionId: string,
+  senderRole: "I" | "R",
+  envelope: Envelope
+): Uint8Array {
   const macIn = buildMacInput(
     sessionId,
     senderRole,
@@ -257,6 +255,18 @@ export function verifyEnvelopeHmac(
   }
 
   return macIn;
+}
+
+export function verifyEnvelopeHmac(
+  kMac: Uint8Array,
+  sessionId: string,
+  senderRole: "I" | "R",
+  envelope: Envelope,
+  lastCounter: number
+): Uint8Array {
+  validateEnvelopeFormat(sessionId, senderRole, envelope);
+  if (envelope.counter <= lastCounter) throw new EnvelopeError("replay");
+  return verifyEnvelopeMac(kMac, sessionId, senderRole, envelope);
 }
 
 function decryptWithKey(kEnc: Uint8Array, envelope: Envelope): string | Uint8Array {

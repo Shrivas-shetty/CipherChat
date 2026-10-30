@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, JSON, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, JSON, LargeBinary, String, Text, text as sql_text
 from sqlalchemy import ForeignKey, Index
 
 from app.db.lab_base import LabBase
@@ -120,3 +120,71 @@ class BenchSample(LabBase):
     bytes_up = Column(Integer, nullable=False)
     bytes_down = Column(Integer, nullable=False)
     ws_notify_bytes = Column(Integer, nullable=False)
+
+
+class CompareRun(LabBase):
+    __tablename__ = "cmp_runs"
+    __table_args__ = (Index("uq_cmp_single_running", "status", unique=True,
+                           sqlite_where=sql_text("status = 'running'")),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(16), nullable=False, index=True)
+    analyst_id = Column(Integer, nullable=False, index=True)
+    label = Column(String(64), nullable=False)
+    input_text = Column(Text, nullable=False)
+    input_bytes = Column(Integer, nullable=False)
+    trials = Column(Integer, nullable=False)
+    warmup = Column(Integer, nullable=False)
+    setup_keygen_ms = Column(Float, nullable=False)
+    setup_dh_ms = Column(Float, nullable=False)
+    setup_hkdf_ms = Column(Float, nullable=False)
+    sig_public_key_b64 = Column(String(100), nullable=False)
+    sig_fingerprint = Column(String(64), nullable=False)
+
+
+class CompareExchange(LabBase):
+    __tablename__ = "cmp_exchanges"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("cmp_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    mode = Column(String(10), nullable=False)
+    warmup = Column(Boolean, nullable=False, default=False)
+    text = Column(Text, nullable=True)
+    session_id = Column(String(36), nullable=True)
+    sender_role = Column(String(1), nullable=True)
+    counter = Column(Integer, nullable=True)
+    msg_type = Column(String(10), nullable=True)
+    meta_json = Column(String(16), nullable=True)
+    iv = Column(LargeBinary(16), nullable=True)
+    ct = Column(LargeBinary, nullable=True)
+    hmac = Column(LargeBinary(32), nullable=True)
+    signature = Column(LargeBinary(64), nullable=True)
+
+
+class CompareTrial(LabBase):
+    __tablename__ = "cmp_trials"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("cmp_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    trial_no = Column(Integer, nullable=False)
+    mode = Column(String(10), nullable=False)
+    warmup = Column(Boolean, nullable=False)
+    exchange_id = Column(Integer, ForeignKey("cmp_exchanges.id", ondelete="CASCADE"), nullable=False)
+    total_ms = Column(Float, nullable=False)
+    prep_ms = Column(Float, nullable=False)
+    post_ms = Column(Float, nullable=False)
+    get_ms = Column(Float, nullable=False)
+    finish_ms = Column(Float, nullable=False)
+    seal_ms = Column(Float, nullable=True)
+    sign_ms = Column(Float, nullable=True)
+    verify_hmac_ms = Column(Float, nullable=True)
+    verify_sig_ms = Column(Float, nullable=True)
+    decrypt_ms = Column(Float, nullable=True)
+    post_req_bytes = Column(Integer, nullable=False)
+    post_resp_bytes = Column(Integer, nullable=False)
+    get_resp_bytes = Column(Integer, nullable=False)
+    plaintext_bytes = Column(Integer, nullable=False)
+    ciphertext_bytes = Column(Integer, nullable=True)
+    integrity_ok = Column(Boolean, nullable=True)
+    signature_ok = Column(Boolean, nullable=True)
+    roundtrip_ok = Column(Boolean, nullable=False)
